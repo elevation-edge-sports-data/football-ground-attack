@@ -12,6 +12,11 @@ Earlier versions (v0, v2, v3):
 
 Not affiliated with, endorsed by, or licensed by any league or team.
 
+## v10.4
+
+- Collapsed archive panel on the live page. Current version and GitHub stay outside the list. Archive snapshots unchanged.
+- HUD: Mode, Play as, and Next play are segmented buttons to the left of the kits. Game no longer repeats the play name in the side panel. Practice keeps both play pickers.
+
 ## v10
 
 - **Game** is the default mode (Practice remains available)

@@ -19,20 +19,23 @@
         <p class="lab-eyebrow">Elevation Edge · v10</p>
         <h1>Football Ground Attack Lab</h1>
       </div>
-            <nav class="lab-versions" aria-label="Version archive">
-        <span class="lab-versions-label">Archive</span>
-        <a href="archive/v0.html">v0</a>
-        <a href="archive/v1.html">v1</a>
-        <a href="archive/v2.html">v2</a>
-        <a href="archive/v3/index.html">v3</a>
-        <a href="archive/v4/index.html">v4</a>
-        <a href="archive/v5/index.html">v5</a>
-        <a href="archive/v6-1/index.html">v6</a>
-        <a href="archive/v7/index.html">v7</a>
-        <a href="archive/v8/index.html">v8</a>
-        <a href="archive/v9/index.html">v9</a>
+            <nav class="lab-versions" id="lab-versions" aria-label="Version archive">
+        <button type="button" id="lab-archive" aria-expanded="false" aria-controls="lab-version-list">Archive</button>
         <a href="index.html" aria-current="page">v10</a>
         <a href="https://github.com/elevation-edge-sports-data/football-ground-attack-lab">GitHub</a>
+        <div class="lab-versions-list" id="lab-version-list" hidden>
+          <a href="archive/v0.html">v0</a>
+          <a href="archive/v1.html">v1</a>
+          <a href="archive/v2.html">v2</a>
+          <a href="archive/v3/index.html">v3</a>
+          <a href="archive/v4/index.html">v4</a>
+          <a href="archive/v5/index.html">v5</a>
+          <a href="archive/v6-1/index.html">v6</a>
+          <a href="archive/v7/index.html">v7</a>
+          <a href="archive/v8/index.html">v8</a>
+          <a href="archive/v9/index.html">v9</a>
+          <span aria-current="page">v10</span>
+        </div>
       </nav>
     </header>
 
@@ -49,6 +52,32 @@
     </div>
 
     <div id="topStrip" class="top-strip">
+      <div class="hud-segments">
+        <div class="seg" role="group" aria-label="Mode">
+          <button type="button" data-seg="mode" data-value="game" aria-pressed="true">Game</button>
+          <button type="button" data-seg="mode" data-value="practice" aria-pressed="false">Practice</button>
+        </div>
+        <div class="seg" role="group" aria-label="Play as">
+          <button type="button" data-seg="side" data-value="off" aria-pressed="true">Offense</button>
+          <button type="button" data-seg="side" data-value="def" aria-pressed="false">Defense</button>
+        </div>
+        <div class="seg" role="group" aria-label="Next play">
+          <button type="button" data-seg="next" data-value="auto" aria-pressed="true">Automatic</button>
+          <button type="button" data-seg="next" data-value="snap" aria-pressed="false">On snap</button>
+        </div>
+        <select id="modeSelect" class="hidden" hidden>
+          <option value="game" selected>Game</option>
+          <option value="practice">Practice</option>
+        </select>
+        <select id="sideSelect" class="hidden" hidden>
+          <option value="off" selected>Offense</option>
+          <option value="def">Defense</option>
+        </select>
+        <select id="nextPlaySelect" class="hidden" hidden>
+          <option value="auto" selected>Automatic</option>
+          <option value="snap">On snap</option>
+        </select>
+      </div>
       <div id="uniformBanner" class="uni-banner" aria-label="Uniform selection">
         <div class="uni-side">
           <span class="uni-label">OFF</span>
@@ -80,38 +109,15 @@
       <aside id="sideControls" class="lab-aside">
         
 
-        <div class="lab-panel">
-          <div class="lab-panel-title">Mode</div>
-          <label class="lab-row">
-            Mode
-            <select id="modeSelect">
-              <option value="game" selected>Game</option>
-              <option value="practice">Practice</option>
-            </select>
-          </label>
-          <label class="lab-row">
-            Play as
-            <select id="sideSelect">
-              <option value="off" selected>Offense</option>
-              <option value="def">Defense</option>
-            </select>
-          </label>
-          <label class="lab-row">
-            Next play
-            <select id="nextPlaySelect">
-              <option value="auto" selected>Automatic</option>
-              <option value="snap">On snap</option>
-            </select>
-          </label>
+        <div class="lab-panel" id="practicePanel">
+          <div class="lab-panel-title">Practice</div>
           <div id="practiceControls">
-            <label class="lab-row" id="offPlayRow">Offense play
-              <select id="practiceOffPlay"></select>
-              <span id="gameOffPlayLabel" class="call-label hidden">—</span>
-            </label>
-            <label class="lab-row" id="defSchemeRow">Defense scheme
-              <select id="practiceDefScheme"></select>
-              <span id="gameDefSchemeLabel" class="call-label hidden">—</span>
-            </label>
+            <div class="lab-row" id="offPlayRow">
+              <select id="practiceOffPlay" aria-label="Offense play"></select>
+            </div>
+            <div class="lab-row" id="defSchemeRow">
+              <select id="practiceDefScheme" aria-label="Defense scheme"></select>
+            </div>
           </div>
         </div>
 
@@ -408,6 +414,41 @@
   <script src="game.js"></script>
   <script>
     startGame(document.getElementById("game"));
+  </script>
+  <script>
+    (function () {
+      var nav = document.getElementById("lab-versions");
+      var btn = document.getElementById("lab-archive");
+      var list = document.getElementById("lab-version-list");
+      if (!nav || !btn || !list) return;
+
+      function isOpen() {
+        return btn.getAttribute("aria-expanded") === "true";
+      }
+
+      function setOpen(open) {
+        list.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (!open) return;
+        var pauseBtn = document.getElementById("pauseBtn");
+        if (pauseBtn && pauseBtn.textContent === "Pause") pauseBtn.click();
+      }
+
+      btn.addEventListener("click", function () {
+        setOpen(!isOpen());
+      });
+
+      document.addEventListener("pointerdown", function (e) {
+        if (!isOpen()) return;
+        var t = e.target;
+        if (t && t.nodeType && nav.contains(t)) return;
+        setOpen(false);
+      }, true);
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && isOpen()) setOpen(false);
+      });
+    })();
   </script>
 </body>
 </html>

@@ -827,6 +827,35 @@ function startGame(canvas) {
 		if (gameBody) gameBody.classList.toggle("hidden", isPrac);
 		if (pracBody) pracBody.classList.toggle("hidden", !isPrac);
 	}
+	function refreshHudSegments() {
+		const sideSel = $("sideSelect");
+		const nextSel = $("nextPlaySelect");
+		const current = {
+			mode: gameMode,
+			side: sideSel ? sideSel.value : "off",
+			next: nextSel ? nextSel.value : "auto"
+		};
+		document.querySelectorAll(".hud-segments button[data-seg]").forEach((btn) => {
+			const seg = btn.getAttribute("data-seg");
+			btn.setAttribute("aria-pressed", btn.getAttribute("data-value") === current[seg] ? "true" : "false");
+		});
+	}
+	function bindHudSegments() {
+		const ids = { mode: "modeSelect", side: "sideSelect", next: "nextPlaySelect" };
+		document.querySelectorAll(".hud-segments button[data-seg]").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const sel = $(ids[btn.getAttribute("data-seg")]);
+				if (!sel) return;
+				const value = btn.getAttribute("data-value") || "";
+				if (sel.value !== value) {
+					sel.value = value;
+					sel.dispatchEvent(new Event("change", { bubbles: true }));
+				}
+				refreshHudSegments();
+			});
+		});
+		refreshHudSegments();
+	}
 	function syncNextPlayDefault() {
 		const np = $("nextPlaySelect");
 		if (gameMode === "game") {
@@ -836,6 +865,7 @@ function startGame(canvas) {
 			if (np) np.value = "snap";
 			nextPlayOnSnap = true;
 		}
+		refreshHudSegments();
 	}
 	function huddleWaitHint() {
 		if (!nextPlayOnSnap) return " — auto snap";
@@ -5279,6 +5309,7 @@ function remaining(group) {
 		document.body.classList.toggle("defense-mode", userSide === "def");
 		const sel = $("sideSelect");
 		if (sel && sel.value !== userSide) sel.value = userSide;
+		refreshHudSegments();
 		defAHoldArmed = false;
 		defAHoldT = 0;
 		defWrapPhase = "none";
@@ -14313,22 +14344,12 @@ function drawMiniPreview(canvas, kind) {
 		const ds = $("practiceDefScheme");
 		const offRow = $("offPlayRow");
 		const defRow = $("defSchemeRow");
-		const offLab = $("gameOffPlayLabel");
-		const defLab = $("gameDefSchemeLabel");
 		const hint = $("callHint");
 		const practice = gameMode === "practice";
 		if (offRow) offRow.classList.remove("hidden");
 		if (defRow) defRow.classList.remove("hidden");
 		if (op) op.classList.toggle("hidden", !practice);
 		if (ds) ds.classList.toggle("hidden", !practice);
-		if (offLab) {
-			offLab.classList.toggle("hidden", practice);
-			offLab.textContent = currentPlay ? currentPlay.name : "—";
-		}
-		if (defLab) {
-			defLab.classList.toggle("hidden", practice);
-			defLab.textContent = currentScheme ? currentScheme.name : "—";
-		}
 		if (op && currentPlay && practice) {
 			const id = currentPlay.baseId || currentPlay.id;
 			if ([...op.options].some((o) => o.value === id)) op.value = id;
@@ -14388,6 +14409,8 @@ function drawMiniPreview(canvas, kind) {
 	}
 	function setGameMode(mode) {
 		gameMode = mode === "practice" ? "practice" : "game";
+		const modePick = $("modeSelect");
+		if (modePick && modePick.value !== gameMode) modePick.value = gameMode;
 		const pc = $("practiceControls");
 		if (pc) pc.classList.remove("hidden");
 		updateConfigPanelForMode();
@@ -14418,12 +14441,14 @@ function drawMiniPreview(canvas, kind) {
 		}
 		if (typeof refreshPracticePreviews === "function") refreshPracticePreviews();
 		syncCallSelects();
+		refreshHudSegments();
 	}
 	const modeEl = $("modeSelect");
 	if (modeEl) {
 		setGameMode(modeEl.value);
 		modeEl.onchange = () => setGameMode(modeEl.value);
 	}
+	bindHudSegments();
 	const pop = $("practiceOffPlay");
 	if (pop) pop.onchange = (e) => {
 		const id = e.target.value;
