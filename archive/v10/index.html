@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Football Ground Attack Lab</title>
+  <meta name="description" content="v10 running-back lab: Game mode default. Play as the runner or the defense. Teammate steer restored." />
+  <meta name="theme-color" content="#0c1410" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<main class="lab-main">
+    <header class="lab-header">
+      <div>
+        <p class="lab-eyebrow">Elevation Edge · v10</p>
+        <h1>Football Ground Attack Lab</h1>
+      </div>
+            <nav class="lab-versions" id="lab-versions" aria-label="Version archive">
+        <button type="button" id="lab-archive" aria-expanded="false" aria-controls="lab-version-list">Archive</button>
+        <a href="index.html" aria-current="page">v10</a>
+        <a href="https://github.com/elevation-edge-sports-data/football-ground-attack-lab">GitHub</a>
+        <div class="lab-versions-list" id="lab-version-list" hidden>
+          <a href="archive/v0.html">v0</a>
+          <a href="archive/v1.html">v1</a>
+          <a href="archive/v2.html">v2</a>
+          <a href="archive/v3/index.html">v3</a>
+          <a href="archive/v4/index.html">v4</a>
+          <a href="archive/v5/index.html">v5</a>
+          <a href="archive/v6-1/index.html">v6</a>
+          <a href="archive/v7/index.html">v7</a>
+          <a href="archive/v8/index.html">v8</a>
+          <a href="archive/v9/index.html">v9</a>
+          <span aria-current="page">v10</span>
+        </div>
+      </nav>
+    </header>
+
+    <div id="hud" class="lab-hud">
+      <div>Score: <span id="score">0</span></div>
+      <div id="clockWrap">Clock: <span id="clock">2:00</span></div>
+      <div class="lab-muted">Yards: <span id="totalYards">0</span></div>
+      <div class="lab-muted">TDs: <span id="tdCount">0</span></div>
+      <div class="lab-muted">Ball on: <span id="ballOn">OPP 20</span></div>
+      <div class="playcall">Play: <span id="playCallName">—</span></div>
+      <div id="padStatus" class="lab-muted padstat">Pad: —</div>
+      <button type="button" id="pauseBtn">Pause</button>
+      <button type="button" id="restartBtn">Restart</button>
+    </div>
+
+    <div id="topStrip" class="top-strip">
+      <div class="hud-segments">
+        <div class="seg" role="group" aria-label="Mode">
+          <button type="button" data-seg="mode" data-value="game" aria-pressed="true">Game</button>
+          <button type="button" data-seg="mode" data-value="practice" aria-pressed="false">Practice</button>
+        </div>
+        <div class="seg" role="group" aria-label="Play as">
+          <button type="button" data-seg="side" data-value="off" aria-pressed="true">Offense</button>
+          <button type="button" data-seg="side" data-value="def" aria-pressed="false">Defense</button>
+        </div>
+        <div class="seg" role="group" aria-label="Next play">
+          <button type="button" data-seg="next" data-value="auto" aria-pressed="true">Automatic</button>
+          <button type="button" data-seg="next" data-value="snap" aria-pressed="false">On snap</button>
+        </div>
+        <select id="modeSelect" class="hidden" hidden>
+          <option value="game" selected>Game</option>
+          <option value="practice">Practice</option>
+        </select>
+        <select id="sideSelect" class="hidden" hidden>
+          <option value="off" selected>Offense</option>
+          <option value="def">Defense</option>
+        </select>
+        <select id="nextPlaySelect" class="hidden" hidden>
+          <option value="auto" selected>Automatic</option>
+          <option value="snap">On snap</option>
+        </select>
+      </div>
+      <div id="uniformBanner" class="uni-banner" aria-label="Uniform selection">
+        <div class="uni-side">
+          <span class="uni-label">OFF</span>
+          <div id="offUniRow" class="uni-row" role="listbox" aria-label="Offense kit"></div>
+        </div>
+        <div class="uni-side">
+          <span class="uni-label">DEF</span>
+          <div id="defUniRow" class="uni-row" role="listbox" aria-label="Defense kit"></div>
+        </div>
+      </div>
+      <div class="personnel-strip">
+        <div class="lab-panel personnel-panel" id="offPersonnel">
+          <div class="lab-panel-title">Offense</div>
+          <div class="lab-row"><span>OL</span><span class="lab-pm"><button type="button" id="olMinus">−</button><span id="olVal">5</span><button type="button" id="olPlus">+</button></span></div>
+          <div class="lab-row"><span>TE</span><span class="lab-pm"><button type="button" id="teMinus">−</button><span id="teVal">3</span><button type="button" id="tePlus">+</button></span></div>
+          <div class="lab-row"><span>FB</span><span class="lab-pm"><button type="button" id="fbMinus">−</button><span id="fbVal">1</span><button type="button" id="fbPlus">+</button></span></div>
+          <div class="lab-row"><span>QB</span><span class="lab-pm"><button type="button" id="qbMinus">−</button><span id="qbVal">1</span><button type="button" id="qbPlus">+</button></span></div>
+        </div>
+        <div class="lab-panel personnel-panel" id="defPersonnel">
+          <div class="lab-panel-title">Defense</div>
+          <div class="lab-row"><span>DT</span><span class="lab-pm"><button type="button" id="dtMinus">−</button><span id="dtVal">3</span><button type="button" id="dtPlus">+</button></span></div>
+          <div class="lab-row"><span>LB</span><span class="lab-pm"><button type="button" id="lbMinus">−</button><span id="lbVal">2</span><button type="button" id="lbPlus">+</button></span></div>
+          <div class="lab-row"><span>DB</span><span class="lab-pm"><button type="button" id="dbMinus">−</button><span id="dbVal">6</span><button type="button" id="dbPlus">+</button></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="mainWrap" class="lab-wrap">
+      <aside id="sideControls" class="lab-aside">
+        
+
+        <div class="lab-panel" id="practicePanel">
+          <div class="lab-panel-title">Practice</div>
+          <div id="practiceControls">
+            <div class="lab-row" id="offPlayRow">
+              <select id="practiceOffPlay" aria-label="Offense play"></select>
+            </div>
+            <div class="lab-row" id="defSchemeRow">
+              <select id="practiceDefScheme" aria-label="Defense scheme"></select>
+            </div>
+          </div>
+        </div>
+
+        
+        <div class="lab-panel">
+          <div class="lab-panel-title">Gameplay</div>
+          <label class="lab-row" id="clockRow">
+            Clock
+            <select id="minSelect">
+              <option value="60">1:00</option>
+              <option value="100">1:40</option>
+              <option value="120" selected>2:00</option>
+              <option value="180">3:00</option>
+              <option value="240">4:00</option>
+              <option value="300">5:00</option>
+            </select>
+          </label>
+          <label class="lab-row">
+            Speed
+            <input id="speedSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="speedLabel">1.00×</span>
+          </label>
+          <label class="lab-row" title="Runner when you play offense; controlled defender when you play defense.">
+            You
+            <input id="youStrSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="youStrLabel">1.00×</span>
+          </label>
+          <label class="lab-row" title="Your OL/skill or your other defenders.">
+            Teammates
+            <input id="mateStrSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="mateStrLabel">1.00×</span>
+          </label>
+          <label class="lab-row" title="The other side: CPU pursuit on offense, CPU OL/runner on defense.">
+            CPU
+            <input id="cpuStrSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="cpuStrLabel">1.00×</span>
+          </label>
+          <label class="lab-row">
+            Break block
+            <input id="breakBlockSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="breakBlockLabel">1.00</span>
+          </label>
+          <label class="lab-row">
+            Break tackle
+            <input id="breakTackleSlider" type="range" min="0.5" max="2" step="0.05" value="1.00" />
+            <span id="breakTackleLabel">1.00</span>
+          </label>
+          <label class="lab-row" title="When off, speed burst stays at full power.">
+            <input type="checkbox" id="fatigueToggle" checked /> Fatigue
+          </label>
+        </div>
+
+        <div class="lab-panel">
+          <div class="lab-panel-title">Camera</div>
+          <label class="lab-row">
+            Angle
+            <select id="cameraSelect">
+              <option value="iso">Angled 2D</option>
+              <option value="top">Overhead</option>
+              <option value="high">High Angle</option>
+              <option value="zoom">Zoom</option>
+              <option value="wide">Wide</option>
+              <option value="free" selected>Freestyle</option>
+            </select>
+          </label>
+          <label class="lab-row">
+            Facing
+            <select id="camCornerSelect">
+              <option value="nw">Northwest</option>
+              <option value="sw">Southwest</option>
+            </select>
+          </label>
+          <label class="lab-row">
+            Replay
+            <select id="replayModeSelect">
+              <option value="pip" selected>PiP</option>
+              <option value="split">Split Screen</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+          <button type="button" id="saveClipBtn" class="lab-btn">Save last play</button>
+          <div id="savedClipsList" class="clip-list"></div>
+          <label class="lab-row">
+            Play diagram
+            <select id="playArtSelect">
+              <option value="on" selected>On</option>
+              <option value="offense">Offense</option>
+              <option value="defense">Defense</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+          <label class="lab-row"><input type="checkbox" id="runnerTrailToggle" checked /> Runner path trail</label>
+        </div>
+
+        <div class="lab-panel">
+          <div class="lab-panel-title">Controls</div>
+          <label class="lab-row">
+            Profile
+            <select id="profileSelect">
+              <option value="basic">Basic (v1)</option>
+              <option value="classic">Expanded (v2)</option>
+              <option value="v3">Wings (v3)</option>
+              <option value="v4">Independent (v4)</option>
+              <option value="v6" selected>Classic (v6)</option>
+            </select>
+          </label>
+          <label class="lab-row" title="Off: Left stick = run, D-pad = special moves. On: swap those roles.">
+            Swap stick / D-pad
+            <span style="display:flex;align-items:center;gap:4px">
+              <input id="swapStickDpadCheck" type="checkbox" />
+              <span id="swapStickDpadLabel">Off (stick runs)</span>
+            </span>
+          </label>
+          <label class="lab-row">
+            Fumbles
+            <span style="display:flex;align-items:center;gap:4px">
+              <input id="fumblesCheck" type="checkbox" />
+              <span id="fumblesLabel">Off</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="lab-panel">
+          <div class="lab-panel-title">Field</div>
+          <label class="lab-row">Width <select id="widthSelect"></select></label>
+          <label class="lab-row">
+            Surface
+            <select id="surfaceSelect">
+              <option value="grass" selected>Natural Grass</option>
+              <option value="fieldturf">Field Turf</option>
+              <option value="astroturf">Astro Turf</option>
+            </select>
+          </label>
+          <label class="lab-row">
+            EZ art
+            <select id="ezArtSelect">
+              <option value="mountains" selected>Mountains</option>
+              <option value="diamonds">Diamonds</option>
+              <option value="solid">Solid</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+          <label class="lab-row">
+            Endzone text
+            <select id="ezTextSelect">
+              <option value="ee" selected>Elevation Edge</option>
+              <option value="off">Off</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <label class="lab-row" id="ezTextCustomRow" style="display:none">
+            Custom
+            <input id="ezTextCustom" maxlength="64" value="ELEVATION EDGE" style="width:100%;min-width:0;letter-spacing:0.02em" />
+          </label>
+          <label class="lab-row">
+            Midfield logo
+            <span style="display:flex;align-items:center;gap:4px">
+              <input id="midLogoCheck" type="checkbox" checked />
+              <span id="midLogoLabel">On</span>
+            </span>
+          </label>
+        </div>
+
+        <details class="lab-panel" id="configPanel" open>
+          <summary class="lab-panel-title" id="configPanelTitle" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none">
+            Game Config <span aria-hidden>▾</span>
+          </summary>
+          <!-- Game-mode only: opening LOS + post-TD rules -->
+          <div id="gameConfigBody">
+            <label class="lab-row">
+              Start
+              <span class="los-ctrl">
+                <button type="button" id="startYardMinus" class="los-step">−</button>
+                <input type="number" id="startYard50" value="50" min="1" max="50" />
+                <button type="button" id="startYardPlus" class="los-step">+</button>
+                <button type="button" id="startSideTri" class="los-tri mid" title="50">◆</button>
+              </span>
+            </label>
+            <input type="hidden" id="startYardInput" value="50" />
+            <input type="hidden" id="startSideSelect" value="own" />
+            <div class="lab-row los-post-row">
+              After TD
+              <span class="los-modes">
+                <button type="button" class="los-mode on" data-mode="random">Random</button>
+                <button type="button" class="los-mode" data-mode="fixed">Fixed</button>
+                <button type="button" class="los-mode" data-mode="increasing">Increasing</button>
+                <button type="button" class="los-mode" data-mode="decreasing">Decreasing</button>
+              </span>
+            </div>
+            <label class="lab-row hidden" id="incrementRow">
+              By
+              <input type="number" id="incrementInput" value="5" min="1" max="50" />
+            </label>
+          </div>
+          <!-- Practice-mode only: adjustable LOS each snap -->
+          <div id="practiceConfigBody" class="hidden">
+            <label class="lab-row">
+              Line of scrimmage
+              <select id="practiceSideSelect">
+                <option value="own">OWN</option>
+                <option value="opp" selected>OPP</option>
+              </select>
+              <input type="number" id="practiceYard50" value="30" min="1" max="50" />
+            </label>
+            <div class="lab-muted" style="font-size:11px;line-height:1.35;margin-top:4px">
+              Practice LOS applies every snap. Change it anytime — field restages immediately.
+            </div>
+          </div>
+        </details>
+      </aside>
+
+
+      <div id="fieldRow" class="field-row">
+      <div id="canvasWrap">
+        <canvas id="game" width="900" height="780" tabindex="0"></canvas>
+        <div id="pauseBanner" class="hidden">
+          <div style="border:1px solid var(--color-accent);background:rgba(12,20,16,0.85);padding:12px 20px;border-radius:8px;font-family:var(--font-display);font-size:1.15rem;font-weight:600;text-align:center">
+            Game paused.<br />
+            <span style="font-size:1rem;font-weight:500">
+              Press A to resume. Press B to restart.<br />
+              Press X or View for Instant Replay
+            </span>
+          </div>
+        </div>
+        <div id="touchLayer" aria-hidden="true">
+          <span class="run">Run</span>
+          <span class="burst">Burst</span>
+        </div>
+      </div>
+
+      <aside id="practicePreview" class="practice-preview" aria-label="Practice play previews">
+        <div class="prev-block" id="prevDefBlock">
+          <div class="prev-banner" id="prevDefBanner">
+            <span class="prev-num" id="prevDefNum"></span>
+            <span id="prevDefLabel">Defense</span>
+          </div>
+          <canvas id="prevDefCanvas" width="220" height="160"></canvas>
+          <div id="practiceDefList" class="practice-play-list" aria-label="Defense schemes"></div>
+        </div>
+        <div class="prev-block" id="prevOffBlock">
+          <div class="prev-banner" id="prevOffBanner">
+            <span class="prev-num" id="prevOffNum"></span>
+            <span id="prevOffLabel">Offense</span>
+          </div>
+          <canvas id="prevOffCanvas" width="220" height="160"></canvas>
+          <div id="practicePlayList" class="practice-play-list" aria-label="Offense plays"></div>
+        </div>
+        <div id="audibleHint" class="prev-audible hidden"></div>
+      </aside>
+      </div><!-- fieldRow -->
+    </div>
+
+    <div class="lab-foot">
+      <div id="help">
+        <strong>v10 Game:</strong> Game is the default mode. Speed labeled 1.00× runs at 1.10; the whole 0.50–2.00 scale is +10% under the label. Play art holds ~0.50s longer after the snap. Automatic huddle is 1.5–2.5s.
+        <br />
+        <strong>v10 Offense:</strong> Wings (v3), Independent (v4), and Classic (v6) teammate steer is restored. Defense still uses LT wrap / RT punch.
+        <br />
+        <strong>v10 Profiles:</strong> T-9 works on every profile (DirectInput v1 and standard-mapping v2). v3: LT/RT take nearest blockers and share your stick. v4/v6: LT/RT take blockers, right stick steers them. Classic uses View/Menu for stiff-arms. Basic (v1) and Expanded (v2) keep LT/RT as stiff — those axes are not the right stick on T-9.
+        <br />
+        <strong>v9 Look:</strong> Robotic player models, true-perspective stadium, X cursor, sticky 0°/180° orbit.
+        <br />
+        <strong>v8 Defense:</strong> Play as Offense (default) or Defense. Defense starts on the free safety. Presnap: tap A/B to cycle; B + stick points; Y sheds after the snap. Live: A sprint · B switch · X dive · Y shed · LT wrap · RT punch · LB or RB strafe · RS hit stick. Practice keeps playbooks. Game re-rolls both calls each play. Automatic next play snaps after a 1.5–2.5s huddle so you can switch and shade.
+        <br />
+        <strong>Profiles:</strong> All T-9 compatible. Basic (v1) = D-pad steers, LT/RT stiff, Start pause. Expanded (v2) = D-pad extra moves, click RS pause. Wings (v3) = LT/RT nearest teammates; one stick directs you and them. Independent (v4) = independently steer ball carrier and teammates. Classic (v6) = Independent plus View stiff left, Menu stiff right; no celebrate.
+        <br />
+        <strong>Xbox:</strong> Stick run · A burst · B spin · X dive · Y truck (Independent/Classic) / hurdle (Wings) · LB/RB juke · LT/RT teammates · D-pad miss moves · View celebrate (off on Classic) · click RS pause · H peek
+        <br />
+        <strong>Replay:</strong> Pause then X, or View / R. A pause/play · X/B zoom · LB/RB slow-mo · LT/RT fast · left stick pan · hold Y + stick orbit · View or R exit. Freestyle: Pause then Y to adjust (X/B zoom, stick recenter, Y+stick rotate, A confirm).
+        <br />
+        <strong>Keys:</strong> WASD run · Space burst · Q/E juke · IJKL miss-pad · F spin · C dive · V truck/hurdle · Z/X teammates · G celebrate · H peek · R replay · P pause · 1–6 pick the focused book
+      </div>
+    </div>
+
+    <div id="nameModal" class="lab-modal hidden">
+      <div class="lab-modal-card">
+        <div>Time expired! Final score: <span id="finalScore">0</span></div>
+        <div style="margin-top:8px">Tag:</div>
+        <input id="nameInput" maxlength="3" value="EE" />
+        <br />
+        <button type="button" id="saveScoreBtn">Enter</button>
+        <div class="lab-muted" style="margin-top:8px;font-size:12px">Press A / Enter to start the next game</div>
+      </div>
+    </div>
+    <div id="continueModal" class="lab-modal hidden">
+      <div class="lab-modal-card">
+        <div style="font-size:1.1rem;margin-bottom:8px">5 games complete</div>
+        <div class="lab-muted" style="margin-bottom:12px">Press Continue (or A) to keep playing</div>
+        <button type="button" id="continueBtn">Continue</button>
+      </div>
+    </div>
+  </main>
+  <script src="field.js"></script>
+  <script src="game.js"></script>
+  <script>
+    startGame(document.getElementById("game"));
+  </script>
+  <script>
+    (function () {
+      var nav = document.getElementById("lab-versions");
+      var btn = document.getElementById("lab-archive");
+      var list = document.getElementById("lab-version-list");
+      if (!nav || !btn || !list) return;
+
+      function isOpen() {
+        return btn.getAttribute("aria-expanded") === "true";
+      }
+
+      function setOpen(open) {
+        list.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (!open) return;
+        var pauseBtn = document.getElementById("pauseBtn");
+        if (pauseBtn && pauseBtn.textContent === "Pause") pauseBtn.click();
+      }
+
+      btn.addEventListener("click", function () {
+        setOpen(!isOpen());
+      });
+
+      document.addEventListener("pointerdown", function (e) {
+        if (!isOpen()) return;
+        var t = e.target;
+        if (t && t.nodeType && nav.contains(t)) return;
+        setOpen(false);
+      }, true);
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && isOpen()) setOpen(false);
+      });
+    })();
+  </script>
+</body>
+</html>

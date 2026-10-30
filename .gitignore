@@ -17,6 +17,7 @@ Desktop.ini
 # Dependencies and build output (this repo is static HTML)
 node_modules/
 dist/
+dev/reference/
 .output/
 .vercel/
 .tanstack/
