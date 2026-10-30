@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
 import {
   UNIFORMS,
   getUniformSelection,
@@ -49,25 +49,38 @@ function Row({ selectedId, onSelect }: { selectedId: number; onSelect: (id: numb
   );
 }
 
-export function UniformBanner() {
+const overlayBanner: CSSProperties = {
+  position: "absolute",
+  top: 12,
+  left: 12,
+  zIndex: 3,
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  padding: "6px 10px",
+  borderRadius: 8,
+  border: "1px solid #2a352c",
+  background: "rgba(22, 28, 24, 0.94)",
+};
+
+const inlineBanner: CSSProperties = {
+  position: "relative",
+  zIndex: 1,
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  width: "max-content",
+  padding: "6px 10px",
+  borderRadius: 8,
+  border: "1px solid #2a352c",
+  background: "rgba(22, 28, 24, 0.94)",
+  flex: "0 0 auto",
+};
+
+export function UniformBanner({ inline = false }: { inline?: boolean }) {
   const selection = useSyncExternalStore(subscribeUniforms, getUniformSelection);
   return (
-    <div
-      aria-label="Uniform selection"
-      style={{
-        position: "absolute",
-        top: 12,
-        left: 12,
-        zIndex: 3,
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        padding: "6px 10px",
-        borderRadius: 8,
-        border: "1px solid #2a352c",
-        background: "rgba(22, 28, 24, 0.94)",
-      }}
-    >
+    <div aria-label="Uniform selection" style={inline ? inlineBanner : overlayBanner}>
       <Row selectedId={selection.offId} onSelect={selectOffenseKit} />
       <Row selectedId={selection.defId} onSelect={selectDefenseKit} />
     </div>

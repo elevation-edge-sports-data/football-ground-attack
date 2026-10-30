@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ThreeEvent } from "@react-three/fiber";
 import {
   CanvasTexture,
   DoubleSide,
   MeshStandardMaterial,
   NearestFilter,
   SRGBColorSpace,
+  type Object3D,
   type Texture,
 } from "three";
-import { REST_POSITION, type PoseJointId } from "./pose";
+import { POSE_JOINTS, REST_POSITION, type PoseJointId } from "./pose";
 import {
   forearmColor,
   pantStripeColor,
@@ -15,9 +17,24 @@ import {
   type Uniform,
 } from "./uniforms";
 
-function Joint({ id, children }: { id: PoseJointId; children?: ReactNode }) {
+function Joint({
+  id,
+  register,
+  children,
+}: {
+  id: PoseJointId;
+  register: (id: PoseJointId, node: Object3D | null) => void;
+  children?: ReactNode;
+}) {
+  const registerRef = useRef(register);
+  const idRef = useRef(id);
+  registerRef.current = register;
+  idRef.current = id;
+  const setRef = useCallback((node: Object3D | null) => {
+    registerRef.current(idRef.current, node);
+  }, []);
   return (
-    <group name={id} position={REST_POSITION[id]}>
+    <group name={id} position={REST_POSITION[id]} ref={setRef}>
       {children}
     </group>
   );
@@ -28,42 +45,84 @@ export function PlayerFigure({
   kit,
   number,
   controlled,
+  carry = controlled,
+  onJointRefs,
+  onJointClick,
 }: {
   kit: Uniform;
   number: number;
   controlled: boolean;
+  /** Show the ball on the right hand. Defaults to the controlled player. */
+  carry?: boolean;
+  onJointRefs?: (refs: Partial<Record<PoseJointId, Object3D | null>>) => void;
+  onJointClick?: (id: PoseJointId) => void;
 }) {
+  const jointRefs = useRef<Partial<Record<PoseJointId, Object3D | null>>>({});
+  const clickRef = useRef(onJointClick);
+  clickRef.current = onJointClick;
+  const register = useCallback((id: PoseJointId, node: Object3D | null) => {
+    if (node) {
+      jointRefs.current[id] = node;
+      if (clickRef.current) node.userData.poseJoint = id;
+      else delete node.userData.poseJoint;
+    } else {
+      const prev = jointRefs.current[id];
+      if (prev) delete prev.userData.poseJoint;
+      delete jointRefs.current[id];
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!onJointRefs) return;
+    onJointRefs({ ...jointRefs.current });
+  }, [onJointRefs, kit, number, controlled, carry]);
+
+  const selectPart = useCallback((event: ThreeEvent<MouseEvent>) => {
+    const pick = clickRef.current;
+    if (!pick || event.delta > 2) return;
+    event.stopPropagation();
+    let node: Object3D | null = event.object;
+    while (node) {
+      const id = node.userData.poseJoint;
+      if (typeof id === "string" && (POSE_JOINTS as readonly string[]).includes(id)) {
+        pick(id as PoseJointId);
+        return;
+      }
+      node = node.parent;
+    }
+  }, []);
+
   return (
-    <group>
+    <group onClick={onJointClick ? selectPart : undefined}>
       {controlled ? (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[0.52, 0.68, 24]} />
           <meshBasicMaterial color="#f4efe4" side={DoubleSide} />
         </mesh>
       ) : null}
-      <Joint id="body">
-        <Joint id="hips">
+      <Joint id="body" register={register}>
+        <Joint id="hips" register={register}>
           {/* Inside the jersey on every side, so the hem is one jersey edge. */}
           <mesh position={[0, -0.04, 0]}>
             <boxGeometry args={[0.4, 0.28, 0.22]} />
             <meshStandardMaterial color={kit.pants} roughness={0.7} />
           </mesh>
-          <Leg side="l" kit={kit} />
-          <Leg side="r" kit={kit} />
+          <Leg side="l" kit={kit} register={register} />
+          <Leg side="r" kit={kit} register={register} />
         </Joint>
-        <Joint id="torso">
+        <Joint id="torso" register={register}>
           <mesh position={[0, 0.24, 0]}>
             <boxGeometry args={[0.48, 0.58, 0.3]} />
             <meshStandardMaterial color={kit.jersey} roughness={0.62} />
           </mesh>
           <JerseyNumber number={number} fill={kit.number} outline={kit.numOutline} position={[0, 0.25, -0.16]} rotation={[0, Math.PI, 0]} />
           <JerseyNumber number={number} fill={kit.number} outline={kit.numOutline} position={[0, 0.25, 0.16]} rotation={[0, 0, 0]} />
-          <Joint id="shoulders">
+          <Joint id="shoulders" register={register}>
             <mesh>
               <boxGeometry args={[0.725, 0.12, 0.286]} />
               <meshStandardMaterial color={kit.jersey} roughness={0.62} />
             </mesh>
-            <Joint id="head">
+            <Joint id="head" register={register}>
               <HelmetShell count={kit.helmStripes} helmet={kit.helmet} stripe={kit.helmStripeCol} />
               <mesh position={[0, 0.11375, -0.15]} rotation={[-Math.PI / 2, 0, 0]}>
                 <torusGeometry args={[0.11, 0.009, 6, 12, Math.PI]} />
@@ -90,8 +149,8 @@ export function PlayerFigure({
                 <meshStandardMaterial color={kit.facemask} roughness={0.35} />
               </mesh>
             </Joint>
-            <Arm side="l" kit={kit} />
-            <Arm side="r" kit={kit} carry={controlled} />
+            <Arm side="l" kit={kit} register={register} />
+            <Arm side="r" kit={kit} carry={carry} register={register} />
           </Joint>
         </Joint>
       </Joint>
@@ -99,20 +158,28 @@ export function PlayerFigure({
   );
 }
 
-function Leg({ side, kit }: { side: "l" | "r"; kit: Uniform }) {
+function Leg({
+  side,
+  kit,
+  register,
+}: {
+  side: "l" | "r";
+  kit: Uniform;
+  register: (id: PoseJointId, node: Object3D | null) => void;
+}) {
   const leg = side === "l" ? "lLeg" : "rLeg";
   const shin = side === "l" ? "lShin" : "rShin";
   const foot = side === "l" ? "lFoot" : "rFoot";
   const outer = side === "l" ? -1 : 1;
   return (
-    <Joint id={leg}>
+    <Joint id={leg} register={register}>
       <PantsThigh count={kit.pantStripes} pants={kit.pants} stripe={pantStripeColor(kit)} outer={outer} />
-      <Joint id={shin}>
+      <Joint id={shin} register={register}>
         <mesh position={[0, -0.165, 0]}>
           <boxGeometry args={[0.13, 0.37, 0.16]} />
           <meshStandardMaterial color={kit.socks} roughness={0.65} />
         </mesh>
-        <Joint id={foot}>
+        <Joint id={foot} register={register}>
           <mesh position={[0, 0, -0.005]}>
             <boxGeometry args={[0.15, 0.1, 0.19]} />
             <meshStandardMaterial color={kit.shoes} roughness={0.55} />
@@ -130,30 +197,32 @@ function Leg({ side, kit }: { side: "l" | "r"; kit: Uniform }) {
 function Arm({
   side,
   kit,
+  register,
   carry = false,
 }: {
   side: "l" | "r";
   kit: Uniform;
+  register: (id: PoseJointId, node: Object3D | null) => void;
   carry?: boolean;
 }) {
   const arm = side === "l" ? "lArm" : "rArm";
   const fore = side === "l" ? "lFore" : "rFore";
   const hand = side === "l" ? "lHand" : "rHand";
   return (
-    <Joint id={arm}>
+    <Joint id={arm} register={register}>
       <Sleeve count={kit.sleeveStripes} jersey={kit.jersey} stripe={sleeveStripeColor(kit)} />
-      <Joint id={fore}>
+      <Joint id={fore} register={register}>
         <mesh position={[0, -0.14, -0.005]}>
           <boxGeometry args={[0.13, 0.32, 0.16]} />
           <meshStandardMaterial color={forearmColor(kit)} roughness={0.62} />
         </mesh>
-        <Joint id={hand}>
+        <Joint id={hand} register={register}>
           <mesh position={[0, -0.06, -0.02]}>
             <boxGeometry args={[0.1, 0.1, 0.12]} />
             <meshStandardMaterial color={kit.jersey} roughness={0.5} />
           </mesh>
           {carry ? (
-            <Joint id="football">
+            <Joint id="football" register={register}>
               <Football />
             </Joint>
           ) : null}
