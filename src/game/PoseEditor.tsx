@@ -20,8 +20,32 @@ import {
 import { UniformBanner } from "./UniformBanner";
 import { kitById, PLAYER_NUMBERS, getUniformSelection, subscribeUniforms } from "./uniforms";
 
-const POSE_ID = "pose 1";
-const POSES = [POSE_ID] as const;
+const POSE_ID = "carry 1";
+const POSES = [
+  POSE_ID,
+  "carry 2",
+  "truck 1",
+  "truck 2",
+  "hurdle 1",
+  "hurdle 2",
+  "stiff arm left 1",
+  "stiff arm left 2",
+  "stiff arm right 1",
+  "stiff arm right 2",
+  "juke left",
+  "juke right",
+  "2 point stance",
+  "3 point stance",
+] as const;
+type PoseId = (typeof POSES)[number];
+
+function poseCarriesBall(pose: PoseId): boolean {
+  return pose !== "2 point stance" && pose !== "3 point stance";
+}
+
+function poseBallSide(pose: PoseId): "l" | "r" {
+  return pose === "stiff arm right 1" || pose === "stiff arm right 2" ? "l" : "r";
+}
 
 const BG_KEY = "fga-pose-editor-bg";
 const SCENE_BG = { dark: "#0a0a0c", gray: "#79797b", light: "#e8e8ea" } as const;
@@ -54,13 +78,13 @@ const BODY_PARTS: { id: PoseJointId; label: string }[] = [
   { id: "rArm", label: "Right Upper Arm" },
   { id: "rFore", label: "Right Forearm" },
   { id: "rHand", label: "Right Hand" },
-  { id: "football", label: "Football" },
   { id: "lLeg", label: "Left Thigh" },
   { id: "lShin", label: "Left Shin" },
   { id: "lFoot", label: "Left Foot" },
   { id: "rLeg", label: "Right Thigh" },
   { id: "rShin", label: "Right Shin" },
   { id: "rFoot", label: "Right Foot" },
+  { id: "football", label: "Football" },
 ];
 
 type EditApi = {
@@ -173,6 +197,7 @@ function Scene({
   setParts,
   setSelected,
   token,
+  pose,
   sceneBg,
   kitId,
   editApi,
@@ -185,6 +210,7 @@ function Scene({
   setParts: (refs: Partial<Record<PoseJointId, THREE.Object3D | null>>) => void;
   setSelected: (id: PoseJointId) => void;
   token: number;
+  pose: PoseId;
   sceneBg: SceneBg;
   kitId: number;
   editApi: { current: EditApi };
@@ -272,19 +298,19 @@ function Scene({
 
   useLayoutEffect(() => {
     if (!partsRef.current.body) return;
-    applyPoseJoints(POSE_ID, partsRef.current);
+    applyPoseJoints(pose, partsRef.current);
     invalidate();
-  }, [invalidate, token]);
+  }, [invalidate, pose, token]);
 
   const reportParts = useCallback((refs: Partial<Record<PoseJointId, THREE.Object3D | null>>) => {
     const first = !partsRef.current.body && !!refs.body;
     partsRef.current = refs;
     setParts(refs);
     if (first) {
-      applyPoseJoints(POSE_ID, refs);
+      applyPoseJoints(pose, refs);
       invalidate();
     }
-  }, [invalidate, setParts]);
+  }, [invalidate, pose, setParts]);
 
   useEffect(() => {
     invalidate();
@@ -293,14 +319,16 @@ function Scene({
   return (
     <>
       <color attach="background" args={[SCENE_BG[sceneBg]]} />
-      <ambientLight intensity={0.45} />
+      {/* Diffuse is divided by PI. The front faces away from the key light, so the fill carries the kit color. */}
+      <ambientLight intensity={3} />
       <directionalLight position={[4, 7, 4]} intensity={1.1} />
       <gridHelper args={[8, 16, GRID_BG[sceneBg][0], GRID_BG[sceneBg][1]]} />
       <PlayerFigure
         kit={kitById(kitId)}
         number={PLAYER_NUMBERS.qb ?? 10}
         controlled={false}
-        carry
+        carry={poseCarriesBall(pose)}
+        ballSide={poseBallSide(pose)}
         onJointRefs={reportParts}
         onJointClick={editable ? setSelected : undefined}
       />
@@ -441,6 +469,7 @@ function typingTarget(target: EventTarget | null): boolean {
 
 export function PoseEditor() {
   const [token, setToken] = useState(0);
+  const [pose, setPose] = useState<PoseId>(POSE_ID);
   const [fileReady, setFileReady] = useState(false);
   const [selected, setSelected] = useState<PoseJointId | null>("lShin");
   const [mode, setMode] = useState<"translate" | "rotate">("rotate");
@@ -460,8 +489,14 @@ export function PoseEditor() {
   savingRef.current = saving;
   const partsRef = useRef(parts);
   partsRef.current = parts;
+  const poseRef = useRef(pose);
+  poseRef.current = pose;
+  const editGen = useRef(0);
+  const bodyParts = poseCarriesBall(pose) ? BODY_PARTS : BODY_PARTS.filter((part) => part.id !== "football");
 
   const onHistory = useCallback((undo: number, redo: number) => {
+    editGen.current += 1;
+    setSaveNote("");
     setHist({ undo, redo });
     setPartRev((n) => n + 1);
   }, []);
@@ -553,10 +588,12 @@ export function PoseEditor() {
     }
     setSaving(true);
     setSaveNote("Saving…");
-    savePoseOverride(POSE_ID, saved).then(
+    const savedName = pose;
+    const savedGen = editGen.current;
+    savePoseOverride(savedName, saved).then(
       (where) => {
-        applyPoseJoints(POSE_ID, partsRef.current);
-        setSaveNote(where === "file" ? "Saved." : "Saved in this browser.");
+        if (poseRef.current === savedName) applyPoseJoints(savedName, partsRef.current);
+        if (editGen.current === savedGen) setSaveNote(where === "file" ? "Saved." : "Saved in this browser.");
       },
       (err: unknown) => {
         setSaveNote(err instanceof Error ? err.message : "Save failed.");
@@ -582,7 +619,7 @@ export function PoseEditor() {
     >
       <div style={{ ...barCell, gridColumn: 1, gridRow: 1 }}>
         <div style={{ ...selectedLine, flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Selected: {POSE_ID}
+          Selected: {pose}
         </div>
         <button
           type="button"
@@ -635,7 +672,7 @@ export function PoseEditor() {
               Translate
             </button>
           </div>
-          <UniformBanner inline />
+          <UniformBanner inline single />
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" aria-pressed={sceneBg === "dark"} onClick={() => setSceneBg("dark")} style={btn(sceneBg === "dark", "charcoal")}>
               Dark
@@ -685,12 +722,14 @@ export function PoseEditor() {
           <button
             key={id}
             type="button"
-            aria-pressed
+            aria-pressed={id === pose}
             onClick={() => {
               if (saving) return;
+              if (!poseCarriesBall(id) && selected === "football") setSelected("lShin");
+              setPose(id);
               setToken((n) => n + 1);
             }}
-            style={menuRow(true)}
+            style={menuRow(id === pose)}
           >
             {id}
           </button>
@@ -702,6 +741,7 @@ export function PoseEditor() {
           <Canvas
             frameloop="demand"
             camera={{ position: [2.8, 1.6, -3.6], fov: 38, near: 0.05, far: 80 }}
+            gl={{ toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }}
             onCreated={({ camera }) => {
               camera.lookAt(0, 0.95, 0);
             }}
@@ -713,6 +753,7 @@ export function PoseEditor() {
               setParts={commitParts}
               setSelected={setSelected}
               token={token}
+              pose={pose}
               sceneBg={sceneBg}
               kitId={selection.offId}
               editApi={editApi}
@@ -764,7 +805,7 @@ export function PoseEditor() {
           borderLeft: "1px solid #243040",
         }}
       >
-        {BODY_PARTS.map((part) => {
+        {bodyParts.map((part) => {
           const on = selected === part.id;
           const ready = !!parts[part.id];
           return (

@@ -24,6 +24,14 @@ function asFile(value: unknown): PoseFile {
     }
     if (Object.keys(row).length > 0) file[name] = row;
   }
+  if (file["pose 1"] && !file["carry 1"]) {
+    file["carry 1"] = file["pose 1"];
+    delete file["pose 1"];
+  }
+  if (file["juke left 1"] && !file["juke left"]) {
+    file["juke left"] = file["juke left 1"];
+    delete file["juke left 1"];
+  }
   return file;
 }
 

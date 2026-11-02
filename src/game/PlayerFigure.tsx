@@ -46,14 +46,16 @@ export function PlayerFigure({
   number,
   controlled,
   carry = controlled,
+  ballSide = "r",
   onJointRefs,
   onJointClick,
 }: {
   kit: Uniform;
   number: number;
   controlled: boolean;
-  /** Show the ball on the right hand. Defaults to the controlled player. */
+  /** Show the ball. Defaults to the controlled player, on the right hand. */
   carry?: boolean;
+  ballSide?: "l" | "r";
   onJointRefs?: (refs: Partial<Record<PoseJointId, Object3D | null>>) => void;
   onJointClick?: (id: PoseJointId) => void;
 }) {
@@ -75,7 +77,7 @@ export function PlayerFigure({
   useLayoutEffect(() => {
     if (!onJointRefs) return;
     onJointRefs({ ...jointRefs.current });
-  }, [onJointRefs, kit, number, controlled, carry]);
+  }, [onJointRefs, kit, number, controlled, carry, ballSide]);
 
   const selectPart = useCallback((event: ThreeEvent<MouseEvent>) => {
     const pick = clickRef.current;
@@ -149,8 +151,8 @@ export function PlayerFigure({
                 <meshStandardMaterial color={kit.facemask} roughness={0.35} />
               </mesh>
             </Joint>
-            <Arm side="l" kit={kit} register={register} />
-            <Arm side="r" kit={kit} carry={carry} register={register} />
+            <Arm side="l" kit={kit} carry={carry && ballSide === "l"} register={register} />
+            <Arm side="r" kit={kit} carry={carry && ballSide === "r"} register={register} />
           </Joint>
         </Joint>
       </Joint>
@@ -379,7 +381,8 @@ function Sleeve({ count, jersey, stripe }: { count: number; jersey: string; stri
 
 function pantStripeMap(count: number, outer: -1 | 1, pants: string, stripe: string) {
   if (count <= 0) return null;
-  const zs = count >= 3 ? [-0.06, 0, 0.06] : count === 2 ? [-0.04, 0.04] : [0];
+  // Kit 3 is the two-stripe pair. Keep those bands nearer each other than the old ±0.04 split.
+  const zs = count >= 3 ? [-0.06, 0, 0.06] : count === 2 ? [-0.022, 0.022] : [0];
   const depth = 0.22;
   const half = depth / 2;
   return makeTexture(128, 32, (g, w, h) => {
@@ -648,7 +651,8 @@ function JerseyNumber({
   return (
     <mesh position={position} rotation={rotation}>
       <planeGeometry args={[drawn.width, drawn.height]} />
-      <meshBasicMaterial map={drawn.texture} transparent depthWrite={false} />
+      {/* Same hex as the helmet or sleeve stripes. Lit, so it is not a brighter unlit decal. */}
+      <meshStandardMaterial map={drawn.texture} transparent depthWrite={false} roughness={0.62} />
     </mesh>
   );
 }

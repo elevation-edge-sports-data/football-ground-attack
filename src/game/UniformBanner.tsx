@@ -77,12 +77,12 @@ const inlineBanner: CSSProperties = {
   flex: "0 0 auto",
 };
 
-export function UniformBanner({ inline = false }: { inline?: boolean }) {
+export function UniformBanner({ inline = false, single = false }: { inline?: boolean; single?: boolean }) {
   const selection = useSyncExternalStore(subscribeUniforms, getUniformSelection);
   return (
     <div aria-label="Uniform selection" style={inline ? inlineBanner : overlayBanner}>
       <Row selectedId={selection.offId} onSelect={selectOffenseKit} />
-      <Row selectedId={selection.defId} onSelect={selectDefenseKit} />
+      {single ? null : <Row selectedId={selection.defId} onSelect={selectDefenseKit} />}
     </div>
   );
 }

@@ -28,7 +28,7 @@ const POSE_JOINTS = [
   "rFoot",
 ];
 
-const POSE_NAME = /^[a-zA-Z][a-zA-Z0-9 -]{0,48}$/;
+const POSE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9 -]{0,48}$/;
 
 function posePath(root) {
   return join(root, "src", "game", "poseOverrides.json");

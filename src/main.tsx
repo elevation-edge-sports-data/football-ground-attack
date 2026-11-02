@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { Canvas } from "@react-three/fiber";
+import { NeutralToneMapping } from "three";
 import { FootballField } from "./field/FootballField";
 import { OrbitCamera } from "./field/OrbitCamera";
 import { FIELD } from "./field/spec";
@@ -67,11 +68,14 @@ function App() {
       <Canvas
         style={{ width: "100%", height: "100%" }}
         camera={{ position: [...eye], fov: 42, near: 0.15, far: 900 }}
+        gl={{ toneMapping: NeutralToneMapping, toneMappingExposure: 1 }}
         onCreated={({ camera }) => {
           camera.lookAt(lookTarget[0], lookTarget[1], lookTarget[2]);
         }}
       >
         <color attach="background" args={[FIELD.sky]} />
+        {/* Diffuse is divided by PI, so this fill keeps kit hexes near their stored brightness. */}
+        <ambientLight intensity={2.6} />
         <hemisphereLight args={["#c5d4e0", "#2f4a28", 0.72]} />
         <directionalLight position={[28, 90, 36]} intensity={1.25} />
         <FootballField />
