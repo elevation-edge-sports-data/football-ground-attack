@@ -24,23 +24,46 @@ const POSE_ID = "carry 1";
 const POSES = [
   POSE_ID,
   "carry 2",
+  "sprint 1",
+  "sprint 2",
   "truck 1",
   "truck 2",
   "hurdle 1",
   "hurdle 2",
+  "dive A",
+  "dive B",
+  "dive C",
   "stiff arm left 1",
   "stiff arm left 2",
   "stiff arm right 1",
   "stiff arm right 2",
   "juke left",
   "juke right",
+  "dead leg",
   "2 point stance",
   "3 point stance",
+  "block 1",
+  "tackle 1",
+  "tackle 2",
+  "pancake A1",
+  "pancake A2",
+  "pancake B",
+  "whiff",
 ] as const;
 type PoseId = (typeof POSES)[number];
 
 function poseCarriesBall(pose: PoseId): boolean {
-  return pose !== "2 point stance" && pose !== "3 point stance";
+  return (
+    pose !== "2 point stance" &&
+    pose !== "3 point stance" &&
+    pose !== "block 1" &&
+    pose !== "tackle 1" &&
+    pose !== "pancake A1" &&
+    pose !== "pancake A2" &&
+    pose !== "pancake B" &&
+    pose !== "whiff" &&
+    pose !== "tackle 2"
+  );
 }
 
 function poseBallSide(pose: PoseId): "l" | "r" {
@@ -327,6 +350,7 @@ function Scene({
         kit={kitById(kitId)}
         number={PLAYER_NUMBERS.qb ?? 10}
         controlled={false}
+        ring
         carry={poseCarriesBall(pose)}
         ballSide={poseBallSide(pose)}
         onJointRefs={reportParts}
@@ -665,12 +689,6 @@ export function PoseEditor() {
             >
               Redo
             </button>
-            <button type="button" onClick={() => setMode("rotate")} style={btn(mode === "rotate", "charcoal")}>
-              Rotate
-            </button>
-            <button type="button" onClick={() => setMode("translate")} style={btn(mode === "translate", "charcoal")}>
-              Translate
-            </button>
           </div>
           <UniformBanner inline single />
           <div style={{ display: "flex", gap: 8 }}>
@@ -778,6 +796,14 @@ export function PoseEditor() {
             borderLeft: "1px solid #243040",
           }}
         >
+          <div style={{ display: "flex", gap: 8, margin: "0 8px 16px" }}>
+            <button type="button" onClick={() => setMode("rotate")} style={btn(mode === "rotate", "charcoal")}>
+              Rotate
+            </button>
+            <button type="button" onClick={() => setMode("translate")} style={btn(mode === "translate", "charcoal")}>
+              Translate
+            </button>
+          </div>
           <PartNumbers
             object={controlObject}
             revision={partRev}
@@ -892,7 +918,7 @@ function PartNumbers({
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 16 }}>
       <div>
-        <div style={menuHead}>World position</div>
+        <div style={menuHead}>Position</div>
         {axes.map((axis) => (
           <AxisRow
             key={`p-${axis}-${revision}`}
@@ -905,7 +931,7 @@ function PartNumbers({
         ))}
       </div>
       <div>
-        <div style={menuHead}>World rotation</div>
+        <div style={menuHead}>Rotation</div>
         {axes.map((axis) => (
           <AxisRow
             key={`r-${axis}-${revision}`}

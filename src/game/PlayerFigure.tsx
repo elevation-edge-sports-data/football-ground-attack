@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import {
+  Box3,
   CanvasTexture,
   DoubleSide,
+  Matrix4,
   MeshStandardMaterial,
   NearestFilter,
   SRGBColorSpace,
+  Vector3,
+  type Group,
+  type Mesh,
   type Object3D,
   type Texture,
 } from "three";
+import { applyPoseJoints } from "./poseOverrides";
 import { POSE_JOINTS, REST_POSITION, type PoseJointId } from "./pose";
 import {
   forearmColor,
@@ -47,6 +53,8 @@ export function PlayerFigure({
   controlled,
   carry = controlled,
   ballSide = "r",
+  pose,
+  ring = false,
   onJointRefs,
   onJointClick,
 }: {
@@ -56,10 +64,15 @@ export function PlayerFigure({
   /** Show the ball. Defaults to the controlled player, on the right hand. */
   carry?: boolean;
   ballSide?: "l" | "r";
+  /** Saved pose applied on the field. The pose editor leaves this unset and drives the joints itself. */
+  pose?: string;
+  /** Ground ring in the pose editor. The controlled player already has one. */
+  ring?: boolean;
   onJointRefs?: (refs: Partial<Record<PoseJointId, Object3D | null>>) => void;
   onJointClick?: (id: PoseJointId) => void;
 }) {
   const jointRefs = useRef<Partial<Record<PoseJointId, Object3D | null>>>({});
+  const alignRef = useRef<Group>(null);
   const clickRef = useRef(onJointClick);
   clickRef.current = onJointClick;
   const register = useCallback((id: PoseJointId, node: Object3D | null) => {
@@ -79,6 +92,12 @@ export function PlayerFigure({
     onJointRefs({ ...jointRefs.current });
   }, [onJointRefs, kit, number, controlled, carry, ballSide]);
 
+  useLayoutEffect(() => {
+    if (!pose) return;
+    applyPoseJoints(pose, jointRefs.current);
+    if (controlled) centerFigureOnRing(alignRef.current);
+  }, [pose, carry, ballSide, controlled]);
+
   const selectPart = useCallback((event: ThreeEvent<MouseEvent>) => {
     const pick = clickRef.current;
     if (!pick || event.delta > 2) return;
@@ -96,12 +115,13 @@ export function PlayerFigure({
 
   return (
     <group onClick={onJointClick ? selectPart : undefined}>
-      {controlled ? (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+      {controlled || ring ? (
+        <mesh name="player-ring" rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[0.52, 0.68, 24]} />
           <meshBasicMaterial color="#f4efe4" side={DoubleSide} />
         </mesh>
       ) : null}
+      <group ref={alignRef}>
       <Joint id="body" register={register}>
         <Joint id="hips" register={register}>
           {/* Inside the jersey on every side, so the hem is one jersey edge. */}
@@ -125,7 +145,7 @@ export function PlayerFigure({
               <meshStandardMaterial color={kit.jersey} roughness={0.62} />
             </mesh>
             <Joint id="head" register={register}>
-              <HelmetShell count={kit.helmStripes} helmet={kit.helmet} stripe={kit.helmStripeCol} />
+              <HelmetShell count={kit.helmStripes} helmet={kit.helmet} stripe={kit.helmStripeCol} edge={kit.helmStripeEdge} />
               <mesh position={[0, 0.11375, -0.15]} rotation={[-Math.PI / 2, 0, 0]}>
                 <torusGeometry args={[0.11, 0.009, 6, 12, Math.PI]} />
                 <meshStandardMaterial color={kit.facemask} roughness={0.35} />
@@ -156,8 +176,51 @@ export function PlayerFigure({
           </Joint>
         </Joint>
       </Joint>
+      </group>
     </group>
   );
+}
+
+function hasNamedAncestor(obj: Object3D, name: string) {
+  let node: Object3D | null = obj;
+  while (node) {
+    if (node.name === name) return true;
+    node = node.parent;
+  }
+  return false;
+}
+
+const _alignInverse = new Matrix4();
+const _alignPoint = new Vector3();
+const _alignBox = new Box3();
+
+/** Keep the posed body over the ground ring. Dive pitches swing the mesh forward otherwise. */
+function centerFigureOnRing(align: Group | null) {
+  if (!align) return;
+  align.position.set(0, 0, 0);
+  align.updateWorldMatrix(true, true);
+  _alignInverse.copy(align.matrixWorld).invert();
+  _alignBox.makeEmpty();
+  let any = false;
+  align.traverse((obj) => {
+    const mesh = obj as Mesh;
+    if (!mesh.isMesh || !mesh.geometry || hasNamedAncestor(mesh, "football")) return;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const bounds = mesh.geometry.boundingBox;
+    if (!bounds) return;
+    for (const x of [bounds.min.x, bounds.max.x]) {
+      for (const y of [bounds.min.y, bounds.max.y]) {
+        for (const z of [bounds.min.z, bounds.max.z]) {
+          _alignPoint.set(x, y, z).applyMatrix4(mesh.matrixWorld).applyMatrix4(_alignInverse);
+          _alignBox.expandByPoint(_alignPoint);
+          any = true;
+        }
+      }
+    }
+  });
+  if (!any) return;
+  _alignBox.getCenter(_alignPoint);
+  align.position.set(-_alignPoint.x, 0, -_alignPoint.z);
 }
 
 function Leg({
@@ -175,7 +238,7 @@ function Leg({
   const outer = side === "l" ? -1 : 1;
   return (
     <Joint id={leg} register={register}>
-      <PantsThigh count={kit.pantStripes} pants={kit.pants} stripe={pantStripeColor(kit)} outer={outer} />
+      <PantsThigh count={kit.pantStripes} pants={kit.pants} stripe={pantStripeColor(kit)} edge={kit.pantStripeEdge} outer={outer} />
       <Joint id={shin} register={register}>
         <mesh position={[0, -0.165, 0]}>
           <boxGeometry args={[0.13, 0.37, 0.16]} />
@@ -212,7 +275,7 @@ function Arm({
   const hand = side === "l" ? "lHand" : "rHand";
   return (
     <Joint id={arm} register={register}>
-      <Sleeve count={kit.sleeveStripes} jersey={kit.jersey} stripe={sleeveStripeColor(kit)} />
+      <Sleeve count={kit.sleeveStripes} jersey={kit.jersey} stripe={sleeveStripeColor(kit)} gap={kit.sleeveGapCol} />
       <Joint id={fore} register={register}>
         <mesh position={[0, -0.14, -0.005]}>
           <boxGeometry args={[0.13, 0.32, 0.16]} />
@@ -354,16 +417,27 @@ function StripedBox({
   );
 }
 
-function sleeveStripeMap(count: number, jersey: string, stripe: string) {
+function sleeveStripeMap(count: number, jersey: string, stripe: string, gap?: string) {
   if (count <= 0) return null;
+  // Two-stripe kits, including kit 3, put the lower ring at -0.145. Triples use that same lower ring.
   const ys = count >= 3 ? [-0.065, -0.105, -0.145] : [-0.085, -0.145];
   const height = 0.34;
   const half = height / 2;
+  const bandWorld = 0.028;
   return makeTexture(32, 128, (g, w, h) => {
     g.fillStyle = jersey;
     g.fillRect(0, 0, w, h);
+    const band = (bandWorld / height) * h;
+    if (gap && ys.length >= 2) {
+      const ordered = [...ys].sort((a, b) => a - b);
+      const low = ordered[0]!;
+      const high = ordered[ordered.length - 1]!;
+      const top = (1 - (high - bandWorld / 2 + half) / height) * h;
+      const bottom = (1 - (low + bandWorld / 2 + half) / height) * h;
+      g.fillStyle = gap;
+      g.fillRect(0, Math.min(top, bottom), w, Math.abs(bottom - top));
+    }
     g.fillStyle = stripe;
-    const band = (0.028 / height) * h;
     for (const y of ys) {
       const v = (y + half) / height;
       g.fillRect(0, (1 - v) * h - band / 2, w, band);
@@ -371,29 +445,39 @@ function sleeveStripeMap(count: number, jersey: string, stripe: string) {
   });
 }
 
-function Sleeve({ count, jersey, stripe }: { count: number; jersey: string; stripe: string }) {
+function Sleeve({ count, jersey, stripe, gap }: { count: number; jersey: string; stripe: string; gap?: string }) {
   const maps = useMemo(() => {
-    const tex = sleeveStripeMap(count, jersey, stripe);
+    const tex = sleeveStripeMap(count, jersey, stripe, gap);
     return [tex, tex, null, null, tex, tex];
-  }, [count, jersey, stripe]);
+  }, [count, jersey, stripe, gap]);
   return <StripedBox args={[0.2, 0.34, 0.2]} position={[0, -0.155, 0]} color={jersey} roughness={0.62} maps={maps} />;
 }
 
-function pantStripeMap(count: number, outer: -1 | 1, pants: string, stripe: string) {
+function pantStripeMap(count: number, outer: -1 | 1, pants: string, stripe: string, edge?: string) {
   if (count <= 0) return null;
   // Kit 3 is the two-stripe pair. Keep those bands nearer each other than the old ±0.04 split.
   const zs = count >= 3 ? [-0.06, 0, 0.06] : count === 2 ? [-0.022, 0.022] : [0];
   const depth = 0.22;
   const half = depth / 2;
+  const bandWorld = 0.028;
   return makeTexture(128, 32, (g, w, h) => {
     g.fillStyle = pants;
     g.fillRect(0, 0, w, h);
-    g.fillStyle = stripe;
-    const band = (0.028 / depth) * w;
-    for (const z of zs) {
+    const band = (bandWorld / depth) * w;
+    const paint = (z: number) => {
       const u = outer > 0 ? (half - z) / depth : (z + half) / depth;
       g.fillRect(u * w - band / 2, 0, band, h);
+    };
+    // Edge bands match the center stripe's width and run the full side of the thigh.
+    if (edge) {
+      g.fillStyle = edge;
+      for (const z of zs) {
+        paint(z - bandWorld);
+        paint(z + bandWorld);
+      }
     }
+    g.fillStyle = stripe;
+    for (const z of zs) paint(z);
   });
 }
 
@@ -401,37 +485,49 @@ function PantsThigh({
   count,
   pants,
   stripe,
+  edge,
   outer,
 }: {
   count: number;
   pants: string;
   stripe: string;
+  edge?: string;
   outer: -1 | 1;
 }) {
   const maps = useMemo(() => {
-    const tex = pantStripeMap(count, outer, pants, stripe);
+    const tex = pantStripeMap(count, outer, pants, stripe, edge);
     const slots: Array<CanvasTexture | null> = [null, null, null, null, null, null];
     slots[outer > 0 ? 0 : 1] = tex;
     return slots;
-  }, [count, outer, pants, stripe]);
+  }, [count, outer, pants, stripe, edge]);
   return <StripedBox args={[0.2, 0.44, 0.22]} position={[0, -0.2, 0]} color={pants} roughness={0.7} maps={maps} />;
 }
 
-function helmetMaps(count: number, helmet: string, stripe: string) {
+function helmetMaps(count: number, helmet: string, stripe: string, edge?: string) {
   const blank: Array<CanvasTexture | null> = [null, null, null, null, null, null];
   if (count <= 0) return blank;
   const xs = count >= 3 ? [-0.07, 0, 0.07] : count === 2 ? [-0.05, 0.05] : [0];
   const width = 0.244;
   const half = width / 2;
+  const bandWorld = 0.028;
   const paint = (g: CanvasRenderingContext2D, w: number, h: number, down: number) => {
     g.fillStyle = helmet;
     g.fillRect(0, 0, w, h);
-    g.fillStyle = stripe;
-    const band = (0.028 / width) * w;
-    for (const x of xs) {
+    const band = (bandWorld / width) * w;
+    const paintBand = (x: number) => {
       const u = (x + half) / width;
       g.fillRect(u * w - band / 2, 0, band, h * down);
+    };
+    // Edge bands match the center stripe's width and stop at the same point down the shell.
+    if (edge) {
+      g.fillStyle = edge;
+      for (const x of xs) {
+        paintBand(x - bandWorld);
+        paintBand(x + bandWorld);
+      }
     }
+    g.fillStyle = stripe;
+    for (const x of xs) paintBand(x);
   };
   const full = makeTexture(128, 128, (g, w, h) => paint(g, w, h, 1));
   const front = makeTexture(128, 128, (g, w, h) => paint(g, w, h, 0.25));
@@ -441,8 +537,18 @@ function helmetMaps(count: number, helmet: string, stripe: string) {
   return blank;
 }
 
-function HelmetShell({ count, helmet, stripe }: { count: number; helmet: string; stripe: string }) {
-  const maps = useMemo(() => helmetMaps(count, helmet, stripe), [count, helmet, stripe]);
+function HelmetShell({
+  count,
+  helmet,
+  stripe,
+  edge,
+}: {
+  count: number;
+  helmet: string;
+  stripe: string;
+  edge?: string;
+}) {
+  const maps = useMemo(() => helmetMaps(count, helmet, stripe, edge), [count, helmet, stripe, edge]);
   return <StripedBox args={[0.244, 0.27, 0.3]} position={[0, 0.143, 0]} color={helmet} roughness={0.4} maps={maps} />;
 }
 

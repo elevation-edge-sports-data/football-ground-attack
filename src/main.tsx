@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState, type CSSProperties } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Canvas } from "@react-three/fiber";
 import { NeutralToneMapping } from "three";
@@ -27,41 +27,13 @@ setFollowTarget(lookTarget[0], lookTarget[1], lookTarget[2]);
 const eye = worldFromField(leadX, leadYard - 16, 18);
 
 function poseEditorRequested(): boolean {
+  // docs/pose-editor.html sets this so the static page opens the editor with no query string.
+  if (document.documentElement.hasAttribute("data-pose-editor")) return true;
   return new URLSearchParams(window.location.search).has("pose-editor");
 }
 
-function openPoseEditor() {
-  const url = new URL(window.location.href);
-  url.searchParams.set("pose-editor", "1");
-  history.pushState(null, "", url);
-}
-
-const poseEditorButton: CSSProperties = {
-  position: "absolute",
-  left: 12,
-  bottom: 12,
-  zIndex: 3,
-  background: "rgba(22, 28, 24, 0.94)",
-  color: "#e8ece6",
-  border: "1px solid #2a352c",
-  borderRadius: 8,
-  padding: "8px 12px",
-  cursor: "pointer",
-  fontFamily: '"Barlow Condensed", sans-serif',
-  fontSize: 16,
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-};
-
 function App() {
-  const [editor, setEditor] = useState(poseEditorRequested);
-  useEffect(() => {
-    const onPop = () => setEditor(poseEditorRequested());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  if (editor) return <PoseEditor />;
+  if (poseEditorRequested()) return <PoseEditor />;
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -83,16 +55,6 @@ function App() {
         <OrbitCamera />
       </Canvas>
       <UniformBanner />
-      <button
-        type="button"
-        style={poseEditorButton}
-        onClick={() => {
-          openPoseEditor();
-          setEditor(true);
-        }}
-      >
-        Pose editor
-      </button>
     </div>
   );
 }

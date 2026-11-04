@@ -25,6 +25,17 @@ export const FIELD = {
 export const SOUTH_BACK = -FIELD.endZone;
 export const NORTH_BACK = FIELD.length + FIELD.endZone;
 
+/**
+ * Playable ground past the painted field.
+ * Sidelines are x = 0 and x = width. End lines are the back of each end zone.
+ * Players are not pinned to the paint; they stop at this outer rectangle.
+ */
+export const PLAY_MARGIN = 5;
+export const PLAY_MIN_X = -PLAY_MARGIN;
+export const PLAY_MAX_X = FIELD.width + PLAY_MARGIN;
+export const PLAY_MIN_YARD = SOUTH_BACK - PLAY_MARGIN;
+export const PLAY_MAX_YARD = NORTH_BACK + PLAY_MARGIN;
+
 export function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
