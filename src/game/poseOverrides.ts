@@ -32,6 +32,10 @@ function asFile(value: unknown): PoseFile {
     file["juke left"] = file["juke left 1"];
     delete file["juke left 1"];
   }
+  if (file["dead leg"] && !file["hesitate"]) {
+    file["hesitate"] = file["dead leg"];
+    delete file["dead leg"];
+  }
   return file;
 }
 

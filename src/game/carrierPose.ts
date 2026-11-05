@@ -17,11 +17,48 @@ export type CarrierAction =
   | "hurdle"
   | "hurdleL"
   | "hurdleR"
+  | "shakeL"
+  | "shakeR"
+  | "hesitate left"
+  | "hesitate right"
+  | "spin"
+  | "spinL"
+  | "spinR"
   | "sprint"
   | "dive";
 
 export function isHurdle(action: CarrierAction): action is "hurdle" | "hurdleL" | "hurdleR" {
   return action === "hurdle" || action === "hurdleL" || action === "hurdleR";
+}
+
+/** Shake sells one way, crosses back, then finishes as a full juke. */
+export const SHAKE_P1 = 0.2;
+export const SHAKE_P2 = 0.25;
+export const SHAKE_P2_END = SHAKE_P1 + SHAKE_P2;
+
+/** Hesitate holds one pose while the runner gives ground. */
+export const DEAD_TIME = 0.4;
+
+/** Spin plants with a short juke, then turns. The turn has no third phase. */
+export const SPIN_P1 = 0.25;
+export const SPIN_P2 = 0.4;
+export const SPIN_TIME = SPIN_P1 + SPIN_P2;
+
+export type ScriptAction = "shakeL" | "shakeR" | "hesitate left" | "hesitate right" | "spinL" | "spinR";
+
+export function isScript(action: CarrierAction): action is ScriptAction {
+  return (
+    action === "shakeL" ||
+    action === "shakeR" ||
+    action === "hesitate left" ||
+    action === "hesitate right" ||
+    action === "spinL" ||
+    action === "spinR"
+  );
+}
+
+export function isSpinBurst(action: CarrierAction): action is "spinL" | "spinR" {
+  return action === "spinL" || action === "spinR";
 }
 
 /** Each dive pose holds this long, in order: dive A, dive B, dive C. */
@@ -53,6 +90,22 @@ export function carrierPoseName(action: CarrierAction, stride: StrideType, diveT
       return "juke left";
     case "jukeR":
       return "juke right";
+    case "shakeL":
+    case "shakeR": {
+      const left = action === "shakeL";
+      if (diveTime < SHAKE_P1) return left ? "shake left" : "shake right";
+      if (diveTime < SHAKE_P2_END) return left ? "juke right" : "juke left";
+      return left ? "juke left" : "juke right";
+    }
+    case "hesitate left":
+    case "hesitate right":
+      return "hesitate";
+    case "spinL":
+    case "spinR": {
+      const left = action === "spinL";
+      if (diveTime < SPIN_P1) return left ? "juke right" : "juke left";
+      return left ? "spin left" : "spin right";
+    }
     case "stiffL":
       return stride === 1 ? "stiff arm left 1" : "stiff arm left 2";
     case "stiffR":
@@ -89,6 +142,11 @@ export function carrierAction(flags: {
   hurdleL: boolean;
   hurdleR: boolean;
   truck: boolean;
+  shakeL: boolean;
+  shakeR: boolean;
+  deadL: boolean;
+  deadR: boolean;
+  spin: boolean;
   dive: boolean;
   sprint: boolean;
 }): CarrierAction {
@@ -100,6 +158,11 @@ export function carrierAction(flags: {
   if (flags.hurdleR) return "hurdleR";
   if (flags.hurdle) return "hurdle";
   if (flags.truck) return "truck";
+  if (flags.shakeL) return "shakeL";
+  if (flags.shakeR) return "shakeR";
+  if (flags.deadL) return "hesitate left";
+  if (flags.deadR) return "hesitate right";
+  if (flags.spin) return "spin";
   if (flags.dive) return "dive";
   if (flags.sprint) return "sprint";
   return "carry";

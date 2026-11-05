@@ -18,6 +18,7 @@ import { applyPoseJoints } from "./poseOverrides";
 import { POSE_JOINTS, REST_POSITION, type PoseJointId } from "./pose";
 import {
   forearmColor,
+  gloveColor,
   pantStripeColor,
   sleeveStripeColor,
   type Uniform,
@@ -284,7 +285,7 @@ function Arm({
         <Joint id={hand} register={register}>
           <mesh position={[0, -0.06, -0.02]}>
             <boxGeometry args={[0.1, 0.1, 0.12]} />
-            <meshStandardMaterial color={kit.jersey} roughness={0.5} />
+            <meshStandardMaterial color={gloveColor(kit)} roughness={0.5} />
           </mesh>
           {carry ? (
             <Joint id="football" register={register}>

@@ -1,4 +1,4 @@
-/** Kits copied from the v10 canvas UNIFORMS list. Named kit 1 through kit 8. */
+/** Named kit 1 through kit 9. User kit numbers are 1-based over these ids. */
 export type Uniform = {
   id: number;
   helmet: string;
@@ -27,17 +27,20 @@ export type Uniform = {
   sleeveGapCol?: string;
   /** Chosen forearm color. Other kits use the team color the jersey is not. */
   forearm?: string;
+  /** Chosen glove color. Other kits use the jersey. */
+  gloves?: string;
 };
 
 export const UNIFORMS: Uniform[] = [
-  { id: 0, helmet: "#002244", jersey: "#FB4F14", pants: "#002244", number: "#FFFFFF", numOutline: "#002244", facemask: "#FB4F14", endPrimary: "#002244", endSecondary: "#FB4F14", socks: "#FB4F14", shoes: "#002244", helmStripes: 1, helmStripeCol: "#FB4F14", pantStripes: 1, pantStripeCol: "#FB4F14", sleeveStripes: 2, sleeveStripeCol: "#002244" },
+  { id: 0, helmet: "#001489", jersey: "#FA4616", pants: "#FFFFFF", number: "#FFFFFF", numOutline: "#001489", facemask: "#FFFFFF", endPrimary: "#001489", endSecondary: "#FA4616", socks: "#001489", shoes: "#FA4616", helmStripes: 1, helmStripeCol: "#FA4616", helmStripeEdge: "#FFFFFF", pantStripes: 1, pantStripeCol: "#001489", pantStripeEdge: "#FA4616", sleeveStripes: 2, sleeveStripeCol: "#001489", sleeveGapCol: "#FFFFFF", forearm: "#FFFFFF", gloves: "#FA4616" },
   { id: 1, helmet: "#E31837", jersey: "#FFFFFF", pants: "#E31837", number: "#E31837", numOutline: "#FFB81C", facemask: "#FFFFFF", endPrimary: "#E31837", endSecondary: "#FFB81C", socks: "#FFFFFF", shoes: "#E31837", helmStripes: 0, helmStripeCol: "#E31837", pantStripes: 1, pantStripeCol: "#FFB81C", pantStripeEdge: "#FFFFFF", sleeveStripes: 2, sleeveStripeCol: "#E31837", sleeveGapCol: "#FFB81C" },
-  { id: 2, helmet: "#FFFFFF", jersey: "#00338D", pants: "#FFFFFF", number: "#FFFFFF", numOutline: "#00338D", facemask: "#00338D", endPrimary: "#00338D", endSecondary: "#FFFFFF", socks: "#00338D", shoes: "#FFFFFF", helmStripes: 1, helmStripeCol: "#00338D", pantStripes: 2, sleeveStripes: 2 },
-  { id: 3, helmet: "#006778", jersey: "#006778", pants: "#FFFFFF", number: "#FFFFFF", numOutline: "#101820", facemask: "#FFFFFF", endPrimary: "#006778", endSecondary: "#D7A22A", socks: "#006778", shoes: "#101820", helmStripes: 0, helmStripeCol: "#D7A22A", pantStripes: 1, pantStripeCol: "#006778", sleeveStripes: 2, forearm: "#101820" },
-  { id: 4, helmet: "#A5ACAF", jersey: "#000000", pants: "#A5ACAF", number: "#A5ACAF", numOutline: "#000000", facemask: "#000000", endPrimary: "#000000", endSecondary: "#A5ACAF", socks: "#000000", shoes: "#111111", helmStripes: 1, helmStripeCol: "#111111", pantStripes: 1, sleeveStripes: 0 },
-  { id: 5, helmet: "#B3995D", jersey: "#AA0000", pants: "#B3995D", number: "#FFFFFF", numOutline: "#B3995D", facemask: "#FFFFFF", endPrimary: "#AA0000", endSecondary: "#B3995D", socks: "#AA0000", shoes: "#1a1208", helmStripes: 1, helmStripeCol: "#FFFFFF", helmStripeEdge: "#AA0000", pantStripes: 1, pantStripeCol: "#FFFFFF", pantStripeEdge: "#AA0000", sleeveStripes: 3 },
-  { id: 6, helmet: "#4F2683", jersey: "#FFC62F", pants: "#4F2683", number: "#4F2683", numOutline: "#FFFFFF", facemask: "#4F2683", endPrimary: "#4F2683", endSecondary: "#FFC62F", socks: "#FFC62F", shoes: "#4F2683", helmStripes: 0, helmStripeCol: "#FFC62F", pantStripes: 1, sleeveStripes: 2 },
-  { id: 7, helmet: "#FFB612", jersey: "#203731", pants: "#FFB612", number: "#FFFFFF", numOutline: "#FFB612", facemask: "#203731", endPrimary: "#203731", endSecondary: "#FFB612", socks: "#203731", shoes: "#203731", helmStripes: 1, helmStripeCol: "#FFFFFF", helmStripeEdge: "#203731", pantStripes: 1, pantStripeCol: "#FFFFFF", pantStripeEdge: "#203731", sleeveStripes: 2, sleeveStripeCol: "#FFB612", sleeveGapCol: "#FFFFFF" },
+  { id: 2, helmet: "#FFFFFF", jersey: "#002C5F", pants: "#FFFFFF", number: "#FFFFFF", numOutline: "#002C5F", facemask: "#002C5F", endPrimary: "#002C5F", endSecondary: "#FFFFFF", socks: "#002C5F", shoes: "#FFFFFF", helmStripes: 1, helmStripeCol: "#002C5F", pantStripes: 2, sleeveStripes: 2 },
+  { id: 3, helmet: "#FF3C00", jersey: "#311D00", pants: "#FF3C00", number: "#FFFFFF", numOutline: "#311D00", facemask: "#FFFFFF", endPrimary: "#311D00", endSecondary: "#FF3C00", socks: "#FFFFFF", shoes: "#311D00", helmStripes: 1, helmStripeCol: "#FFFFFF", helmStripeEdge: "#311D00", pantStripes: 1, pantStripeCol: "#FFFFFF", pantStripeEdge: "#311D00", sleeveStripes: 2, sleeveStripeCol: "#FF3C00", sleeveGapCol: "#FFFFFF", forearm: "#FFFFFF" },
+  { id: 4, helmet: "#A5ACAF", jersey: "#000000", pants: "#A5ACAF", number: "#A5ACAF", numOutline: "#000000", facemask: "#000000", endPrimary: "#000000", endSecondary: "#A5ACAF", socks: "#000000", shoes: "#A5ACAF", helmStripes: 1, helmStripeCol: "#111111", pantStripes: 1, sleeveStripes: 0, forearm: "#000000", gloves: "#A5ACAF" },
+  { id: 5, helmet: "#B3995D", jersey: "#AA0000", pants: "#B3995D", number: "#FFFFFF", numOutline: "#B3995D", facemask: "#FFFFFF", endPrimary: "#AA0000", endSecondary: "#B3995D", socks: "#AA0000", shoes: "#000000", helmStripes: 1, helmStripeCol: "#FFFFFF", helmStripeEdge: "#AA0000", pantStripes: 1, pantStripeCol: "#FFFFFF", pantStripeEdge: "#AA0000", sleeveStripes: 3, forearm: "#FFFFFF" },
+  { id: 6, helmet: "#4F2683", jersey: "#4F2683", pants: "#FFFFFF", number: "#FFFFFF", numOutline: "#FFC62F", facemask: "#FFFFFF", endPrimary: "#4F2683", endSecondary: "#FFC62F", socks: "#4F2683", shoes: "#FFFFFF", helmStripes: 0, helmStripeCol: "#FFC62F", pantStripes: 1, pantStripeCol: "#FFC62F", pantStripeEdge: "#4F2683", sleeveStripes: 2, sleeveStripeCol: "#FFC62F", sleeveGapCol: "#FFFFFF", forearm: "#FFFFFF" },
+  { id: 7, helmet: "#FFB612", jersey: "#203731", pants: "#FFB612", number: "#FFFFFF", numOutline: "#FFB612", facemask: "#203731", endPrimary: "#203731", endSecondary: "#FFB612", socks: "#203731", shoes: "#FFB612", helmStripes: 1, helmStripeCol: "#FFFFFF", helmStripeEdge: "#203731", pantStripes: 1, pantStripeCol: "#FFFFFF", pantStripeEdge: "#203731", sleeveStripes: 2, sleeveStripeCol: "#FFB612", sleeveGapCol: "#FFFFFF", forearm: "#FFFFFF" },
+  { id: 8, helmet: "#FFFFFF", jersey: "#FFFFFF", pants: "#005F61", number: "#005F61", numOutline: "#FA4616", facemask: "#005F61", endPrimary: "#005F61", endSecondary: "#FA4616", socks: "#005F61", shoes: "#FFFFFF", helmStripes: 1, helmStripeCol: "#FA4616", helmStripeEdge: "#005F61", pantStripes: 1, pantStripeCol: "#FA4616", pantStripeEdge: "#FFFFFF", sleeveStripes: 2, sleeveStripeCol: "#FA4616", sleeveGapCol: "#005F61" },
 ];
 
 export function kitName(kit: Uniform) {
@@ -92,6 +95,11 @@ export function pantStripeColor(kit: Uniform) {
 export function forearmColor(kit: Uniform) {
   if (kit.forearm) return kit.forearm;
   return kit.jersey.toLowerCase() === kit.endPrimary.toLowerCase() ? kit.endSecondary : kit.endPrimary;
+}
+
+/** Gloves match the jersey unless the kit names a color. */
+export function gloveColor(kit: Uniform) {
+  return kit.gloves ?? kit.jersey;
 }
 
 type Selection = { offId: number; defId: number };

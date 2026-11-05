@@ -7,9 +7,12 @@ import type { Input } from "./sim";
  * SimView turns that vector with the camera before the sim treats it as field axes.
  * A live left stick replaces the keys. The d-pad adds movement on top.
  * Held specials: Q juke left, E juke right, Z stiff left, X stiff right,
- * V or Y truck, I hurdle, I+J hurdle left, I+L hurdle right, Space sprint, C dive.
- * D-pad Up hurdles, Up-left hurdles left, Up-right hurdles right.
- * Pad Y trucks, LB/RB juke, LT/RT stiff, A sprint, X dive.
+ * V or Y truck, I hurdle, I+J hurdle left, I+L hurdle right,
+ * N shake left, M shake right, G hesitate left, H hesitate right, F spin,
+ * Space sprint, C dive.
+ * D-pad Up hurdles, Up-left hurdles left, Up-right hurdles right,
+ * Left shakes left, Right shakes right, Down-left and Down-right hesitate.
+ * Down alone still moves south. Pad Y trucks, B spins, LB/RB juke, LT/RT stiff, A sprint, X dive.
  */
 const T9_ID_RE = /1949.*0402|Vendor:\s*1949\s*Product:\s*0402|\bT-?9\b|Terios/i;
 const MOVE_CODES = new Set([
@@ -23,7 +26,24 @@ const MOVE_CODES = new Set([
   "KeyD",
 ]);
 
-const ACTION_CODES = new Set(["KeyQ", "KeyE", "KeyZ", "KeyX", "KeyV", "KeyY", "KeyI", "KeyJ", "KeyL", "Space", "KeyC"]);
+const ACTION_CODES = new Set([
+  "KeyQ",
+  "KeyE",
+  "KeyZ",
+  "KeyX",
+  "KeyV",
+  "KeyY",
+  "KeyI",
+  "KeyJ",
+  "KeyL",
+  "KeyN",
+  "KeyM",
+  "KeyG",
+  "KeyH",
+  "KeyF",
+  "Space",
+  "KeyC",
+]);
 
 const STICK_DEAD = 0.18;
 
@@ -40,6 +60,11 @@ export type PadAxes = {
   stiffL: boolean;
   stiffR: boolean;
   truck: boolean;
+  shakeL: boolean;
+  shakeR: boolean;
+  deadL: boolean;
+  deadR: boolean;
+  spin: boolean;
   sprint: boolean;
   dive: boolean;
 };
@@ -80,6 +105,11 @@ function heldAction(keys: ReadonlySet<string>, pad: PadAxes | null): CarrierActi
     hurdleR: hurdle.hurdleR,
     hurdle: hurdle.hurdle,
     truck: keys.has("KeyV") || keys.has("KeyY") || !!pad?.truck,
+    shakeL: keys.has("KeyN") || !!pad?.shakeL,
+    shakeR: keys.has("KeyM") || !!pad?.shakeR,
+    deadL: keys.has("KeyG") || !!pad?.deadL,
+    deadR: keys.has("KeyH") || !!pad?.deadR,
+    spin: keys.has("KeyF") || !!pad?.spin,
     sprint: keys.has("Space") || !!pad?.sprint,
     dive: keys.has("KeyC") || !!pad?.dive,
   });
@@ -95,9 +125,11 @@ export function basicMove(keys: ReadonlySet<string>, pad: PadAxes | null): Input
       x = stick.x;
       yard = stick.y;
     }
-    // Up, Up-left, and Up-right are hurdle buttons. They do not steer.
-    let dx = pad.up ? 0 : (pad.right ? 1 : 0) - (pad.left ? 1 : 0);
-    let dy = pad.up ? 0 : (pad.up ? 1 : 0) - (pad.down ? 1 : 0);
+    // Up is a hurdle. Left and right are shakes. Down-left and down-right are hesitates.
+    // Those buttons do not steer. Down alone still moves south.
+    const dpadSpecial = pad.up || pad.left || pad.right;
+    let dx = 0;
+    let dy = dpadSpecial ? 0 : pad.down ? -1 : 0;
     const dmag = Math.hypot(dx, dy);
     if (dmag > 1) {
       dx /= dmag;
@@ -160,6 +192,7 @@ export function readBasicPad(): PadAxes | null {
       padPressed(pad, 14) ||
       padPressed(pad, 15) ||
       padPressed(pad, 0) ||
+      padPressed(pad, 1) ||
       padPressed(pad, 2);
     if (moving) {
       live = pad;
@@ -169,18 +202,27 @@ export function readBasicPad(): PadAxes | null {
   const pad = live ?? fallback;
   if (!pad) return null;
   const stiff = padStiff(pad);
+  const up = padPressed(pad, 12);
+  const down = padPressed(pad, 13);
+  const left = padPressed(pad, 14);
+  const right = padPressed(pad, 15);
   return {
     x: pad.axes[0] || 0,
     y: pad.axes[1] || 0,
-    up: padPressed(pad, 12),
-    down: padPressed(pad, 13),
-    left: padPressed(pad, 14),
-    right: padPressed(pad, 15),
+    up,
+    down,
+    left,
+    right,
     jukeL: padPressed(pad, 4),
     jukeR: padPressed(pad, 5),
     stiffL: stiff.stiffL,
     stiffR: stiff.stiffR,
     truck: padPressed(pad, 3),
+    shakeL: left && !right && !up && !down,
+    shakeR: right && !left && !up && !down,
+    deadL: down && left && !right,
+    deadR: down && right && !left,
+    spin: padPressed(pad, 1),
     sprint: padPressed(pad, 0),
     dive: padPressed(pad, 2),
   };

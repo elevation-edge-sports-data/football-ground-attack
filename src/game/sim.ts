@@ -9,11 +9,19 @@ import {
 import {
   advanceStride,
   carrierPoseName,
+  DEAD_TIME,
   DIVE_POSE_TIME,
   isHurdle,
+  isScript,
+  isSpinBurst,
   oppositeStride,
+  SHAKE_P1,
+  SHAKE_P2_END,
+  SPIN_P1,
+  SPIN_TIME,
   STRIDE_YARDS,
   type CarrierAction,
+  type ScriptAction,
   type StrideType,
 } from "./carrierPose";
 
@@ -108,6 +116,27 @@ export type Sim = {
   diveLockX: number;
   diveLockY: number;
   diveLocked: boolean;
+  /**
+   * Last clear stick toward the runner's right (+1) or left (−1).
+   * Zero when the push was straight, slight, or has aged out.
+   */
+  clearSteerSide: -1 | 0 | 1;
+  /** Seconds since that clear stick. A stale push does not pick the spin. */
+  clearSteerAge: number;
+  /** Heading and the runner's right when a shake, hesitate, or spin was pressed. */
+  moveHeadX: number;
+  moveHeadY: number;
+  moveRightX: number;
+  moveRightY: number;
+  /** +1 turns a spin toward the runner's left. −1 turns toward the right. */
+  spinTurn: number;
+  /** This frame's scripted slice. Kind stays set after the burst hands back to a run. */
+  scriptKind: ScriptAction | null;
+  scriptT0: number;
+  scriptDt: number;
+  scriptEnded: boolean;
+  /** Button held through the end of its sequence. Another press waits for a release. */
+  moveSpent: CarrierAction | null;
 };
 
 export type Input = {
@@ -171,6 +200,18 @@ export function createSim(): Sim {
     diveLockX: 0,
     diveLockY: 1,
     diveLocked: false,
+    clearSteerSide: 0,
+    clearSteerAge: 1,
+    moveHeadX: 0,
+    moveHeadY: 1,
+    moveRightX: 1,
+    moveRightY: 0,
+    spinTurn: 1,
+    scriptKind: null,
+    scriptT0: 0,
+    scriptDt: 0,
+    scriptEnded: false,
+    moveSpent: null,
     players: [
       player("ol-l", "off", "OL", mid - 2.3, los - 0.5),
       player("ol-r", "off", "OL", mid + 2.3, los - 0.5),
@@ -284,6 +325,15 @@ function moveDuration(action: CarrierAction) {
     case "jukeL":
     case "jukeR":
       return JUKE_TIME;
+    case "shakeL":
+    case "shakeR":
+      return SHAKE_P2_END + JUKE_TIME;
+    case "hesitate left":
+    case "hesitate right":
+      return DEAD_TIME;
+    case "spinL":
+    case "spinR":
+      return SPIN_TIME;
     case "hurdle":
     case "hurdleL":
     case "hurdleR":
@@ -450,6 +500,222 @@ function endDive(sim: Sim, stillHeld: boolean) {
   sim.diveGap = 0;
 }
 
+const HALF_STRIDE = STRIDE_YARDS * 0.5;
+const THREE_QUARTER_STRIDE = STRIDE_YARDS * 0.75;
+/** Stick magnitude below this is too light to choose a spin. */
+const SPIN_CLEAR_MAG = 0.45;
+/** Unit-stick lateral. Straight running with a small drift stays under this. */
+const SPIN_CLEAR_LATERAL = 0.5;
+/** A clear stick still counts for this long after it is released. */
+const SPIN_STEER_WINDOW = 0.2;
+/** Canvas spin looks this far for a defender to cut away from. */
+const SPIN_REACH = 9;
+
+type ScriptSlide = {
+  start: number;
+  end: number;
+  /** −1 is the runner's left, +1 the right. 0 is not a lateral cut. */
+  side: -1 | 0 | 1;
+  yards: number;
+  mode: "cut" | "dead" | "spin";
+};
+
+function shakeTime() {
+  return SHAKE_P2_END + JUKE_TIME;
+}
+
+function scriptSlides(kind: ScriptAction): ScriptSlide[] {
+  if (kind === "shakeL" || kind === "shakeR") {
+    const left = kind === "shakeL";
+    const end = shakeTime();
+    return [
+      { start: 0, end: SHAKE_P1, side: left ? -1 : 1, yards: HALF_STRIDE, mode: "cut" },
+      { start: SHAKE_P1, end: SHAKE_P2_END, side: left ? 1 : -1, yards: THREE_QUARTER_STRIDE, mode: "cut" },
+      { start: SHAKE_P2_END, end, side: left ? -1 : 1, yards: STRIDE_YARDS, mode: "cut" },
+    ];
+  }
+  if (kind === "hesitate left" || kind === "hesitate right") {
+    return [{ start: 0, end: DEAD_TIME, side: 0, yards: HALF_STRIDE, mode: "dead" }];
+  }
+  const left = kind === "spinL";
+  return [
+    { start: 0, end: SPIN_P1, side: left ? 1 : -1, yards: HALF_STRIDE, mode: "cut" },
+    { start: SPIN_P1, end: SPIN_TIME, side: 0, yards: 0, mode: "spin" },
+  ];
+}
+
+/**
+ * Sole of the planted foot in the spin pose, in the runner's frame.
+ * Measured from the posed mesh after it is centered on the ring.
+ * Spin left plants the left foot. Spin right plants the right foot.
+ */
+const SPIN_PLANT = {
+  spinL: { right: -0.56097, forward: -0.298455 },
+  spinR: { right: 0.580867, forward: -0.298454 },
+} as const;
+
+/** Field offset from the ring to the planted sole at this facing. */
+function plantedFootField(kind: "spinL" | "spinR", facingX: number, facingY: number) {
+  const plant = SPIN_PLANT[kind];
+  return {
+    x: facingX * plant.forward + facingY * plant.right,
+    y: facingY * plant.forward - facingX * plant.right,
+  };
+}
+
+/** Positive angles turn toward the runner's left. North goes to the left sideline. */
+function rotateHeading(hx: number, hy: number, angle: number) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return { x: hx * cos - hy * sin, y: hx * sin + hy * cos };
+}
+
+/** Hesitate left steps back-right of the latched velocity. Hesitate right mirrors that. */
+function deadLegAim(which: "hesitate left" | "hesitate right", hx: number, hy: number, rx: number, ry: number) {
+  const side = which === "hesitate left" ? 1 : -1;
+  const x = -hx + side * rx;
+  const y = -hy + side * ry;
+  const mag = Math.hypot(x, y);
+  if (mag < 1e-6) return { x: -hx, y: -hy };
+  return { x: x / mag, y: y / mag };
+}
+
+/** +1 when the stick is toward the runner's right. Straight and slight pushes are 0. */
+function clearStickSide(x: number, yard: number, facingX: number, facingYard: number): -1 | 0 | 1 {
+  const mag = Math.hypot(x, yard);
+  if (mag < SPIN_CLEAR_MAG) return 0;
+  const face = Math.hypot(facingX, facingYard) || 1;
+  const right = (x / mag) * (facingYard / face) - (yard / mag) * (facingX / face);
+  if (Math.abs(right) < SPIN_CLEAR_LATERAL) return 0;
+  return right > 0 ? 1 : -1;
+}
+
+function noteSpinSteer(sim: Sim, carrier: Player, input: Input, dt: number) {
+  if (dt > 0) sim.clearSteerAge += dt;
+  const side = clearStickSide(input.x, input.yard, carrier.facingX, carrier.facingYard);
+  if (side === 0) return;
+  sim.clearSteerSide = side;
+  sim.clearSteerAge = 0;
+}
+
+/**
+ * Spin side.
+ * A clear stick at the press, or within a moment before it, wins: stick right
+ * steps right then spins left, and stick left is the mirror.
+ * Otherwise juke toward the nearest defender and spin away, even by a sideline.
+ * With nobody close, juke toward the nearer sideline and spin back to the open field.
+ * On the exact midpoint with no stick and no defender, pick at random.
+ */
+export function spinSide(sim: Sim, carrier: Player, random: () => number = Math.random): "spinL" | "spinR" {
+  if (sim.clearSteerSide !== 0 && sim.clearSteerAge <= SPIN_STEER_WINDOW) {
+    return sim.clearSteerSide > 0 ? "spinL" : "spinR";
+  }
+  const head = headingOf(carrier);
+  const rightX = head.y;
+  const rightY = -head.x;
+  let best: Player | null = null;
+  let bestDist = SPIN_REACH;
+  for (const other of sim.players) {
+    if (other.team !== "def") continue;
+    const dist = Math.hypot(other.x - carrier.x, other.yard - carrier.yard);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = other;
+    }
+  }
+  if (best) {
+    const towardRight = (best.x - carrier.x) * rightX + (best.yard - carrier.yard) * rightY;
+    if (Math.abs(towardRight) > 1e-3) return towardRight > 0 ? "spinL" : "spinR";
+  }
+  const mid = FIELD.width * 0.5;
+  if (Math.abs(carrier.x - mid) <= 1e-6) return random() < 0.5 ? "spinL" : "spinR";
+  const nearSideline = carrier.x > mid ? 1 : -1;
+  const towardSideline = nearSideline * rightX;
+  if (Math.abs(towardSideline) <= 1e-6) return carrier.x > mid ? "spinL" : "spinR";
+  return towardSideline > 0 ? "spinL" : "spinR";
+}
+
+function latchMoveFrame(sim: Sim, carrier: Player) {
+  const head = headingOf(carrier);
+  sim.moveHeadX = head.x;
+  sim.moveHeadY = head.y;
+  sim.moveRightX = head.y;
+  sim.moveRightY = -head.x;
+}
+
+/** Hesitate steps back from the velocity at the press. Facing is only the fallback. */
+function latchDeadLeg(sim: Sim, carrier: Player) {
+  const head = velocityHeading(sim, carrier);
+  sim.moveHeadX = head.x;
+  sim.moveHeadY = head.y;
+  sim.moveRightX = head.y;
+  sim.moveRightY = -head.x;
+}
+
+function beginScript(sim: Sim, which: ScriptAction, carrier: Player) {
+  if (which === "hesitate left" || which === "hesitate right") latchDeadLeg(sim, carrier);
+  else latchMoveFrame(sim, carrier);
+  sim.spinTurn = which === "spinL" ? -1 : 1;
+  sim.burst = which;
+  sim.burstTime = 0;
+  sim.moveSpent = null;
+}
+
+function endScript(sim: Sim, which: ScriptAction, held: CarrierAction) {
+  if (which === "shakeL") {
+    sim.strideType = 2;
+    sim.strideTravel = 0;
+  } else if (which === "shakeR") {
+    sim.strideType = 1;
+    sim.strideTravel = 0;
+  }
+  sim.burst = "carry";
+  sim.burstTime = 0;
+  const button: CarrierAction = isSpinBurst(which) ? "spin" : which;
+  if (held === button) sim.moveSpent = button;
+}
+
+function scriptDelta(sim: Sim, kind: ScriptAction, t0: number, t1: number) {
+  let x = 0;
+  let y = 0;
+  let facing: { x: number; y: number } | null = null;
+  for (const slide of scriptSlides(kind)) {
+    const a = Math.max(t0, slide.start);
+    const b = Math.min(t1, slide.end);
+    const span = slide.end - slide.start;
+    if (b - a <= 1e-8 || span <= 0) continue;
+    const frac = (b - a) / span;
+    if (slide.mode === "dead" && (kind === "hesitate left" || kind === "hesitate right")) {
+      const aim = deadLegAim(kind, sim.moveHeadX, sim.moveHeadY, sim.moveRightX, sim.moveRightY);
+      x += aim.x * slide.yards * frac;
+      y += aim.y * slide.yards * frac;
+      facing = { x: sim.moveHeadX, y: sim.moveHeadY };
+    } else if (slide.mode === "spin" && (kind === "spinL" || kind === "spinR")) {
+      const u0 = (a - slide.start) / span;
+      const u1 = (b - slide.start) / span;
+      // 270° over this phase. The planted sole stays put while the body turns.
+      const spinAngle = Math.PI * 1.5;
+      const face0 = rotateHeading(sim.moveHeadX, sim.moveHeadY, sim.spinTurn * u0 * spinAngle);
+      const face1 = rotateHeading(sim.moveHeadX, sim.moveHeadY, sim.spinTurn * u1 * spinAngle);
+      facing = face1;
+      const from = plantedFootField(kind, face0.x, face0.y);
+      const to = plantedFootField(kind, face1.x, face1.y);
+      x += from.x - to.x;
+      y += from.y - to.y;
+    } else {
+      x += sim.moveRightX * slide.side * slide.yards * frac;
+      y += sim.moveRightY * slide.side * slide.yards * frac;
+      if (isSpinBurst(kind)) facing = { x: sim.moveHeadX, y: sim.moveHeadY };
+    }
+  }
+  return { x, y, facing };
+}
+
+function shownHeld(held: CarrierAction, sim: Sim): CarrierAction {
+  if (held === "spin" && isSpinBurst(sim.burst)) return sim.burst;
+  return held;
+}
+
 /**
  * Pose follows the held special. A tap still finishes the canvas burst,
  * so the pose and the motion stay together until that window ends.
@@ -463,6 +729,10 @@ function trackBurst(
 ): { action: CarrierAction; motion: SpecialMotion; jukeDt: number; jukeEnded: "jukeL" | "jukeR" | null } {
   const heldJuke = held === "jukeL" || held === "jukeR";
   sim.hurdleDt = 0;
+  sim.scriptKind = null;
+  sim.scriptDt = 0;
+  sim.scriptT0 = 0;
+  sim.scriptEnded = false;
   // Same juke is still held through the stride that separates repeats.
   if (heldJuke && sim.jukeChain === held) {
     return { action: "carry", motion: NO_SPECIAL, jukeDt: 0, jukeEnded: null };
@@ -474,13 +744,22 @@ function trackBurst(
   if (isHurdle(held) && sim.hurdleChain === held) {
     return { action: "carry", motion: NO_SPECIAL, jukeDt: 0, jukeEnded: null };
   }
+  // The sequence finished and the button is still down. Wait for a release.
+  if (sim.moveSpent && held === sim.moveSpent) {
+    return { action: "carry", motion: NO_SPECIAL, jukeDt: 0, jukeEnded: null };
+  }
+  if (sim.moveSpent && held !== sim.moveSpent) sim.moveSpent = null;
   if (sim.jukeChain && held !== sim.jukeChain) sim.jukeChain = null;
   if (sim.diveChain && held !== "dive") sim.diveChain = false;
   if (sim.hurdleChain && held !== sim.hurdleChain) sim.hurdleChain = null;
+  const spinning = held === "spin" && isSpinBurst(sim.burst);
   if (isHurdle(held) && held !== sim.burst) beginHurdle(sim, held, carrier);
   else if (heldJuke && held !== sim.burst) beginJuke(sim, held, carrier);
   else if (held === "dive" && held !== sim.burst) beginDive(sim);
-  else if (held !== "carry" && held !== sim.burst) {
+  else if ((held === "shakeL" || held === "shakeR" || held === "hesitate left" || held === "hesitate right") && held !== sim.burst) {
+    beginScript(sim, held, carrier);
+  } else if (held === "spin" && !isSpinBurst(sim.burst)) beginScript(sim, spinSide(sim, carrier), carrier);
+  else if (held !== "carry" && held !== sim.burst && !spinning) {
     sim.burst = held;
     sim.burstTime = 0;
   }
@@ -499,6 +778,17 @@ function trackBurst(
       if ((sim.burst === "jukeL" || sim.burst === "jukeR") && start < JUKE_TIME && sim.burstTime >= JUKE_TIME) {
         jukeEnded = sim.burst;
         endJuke(sim, jukeEnded, held === jukeEnded);
+      }
+    } else if (isScript(sim.burst)) {
+      const kind = sim.burst;
+      sim.scriptKind = kind;
+      sim.scriptT0 = start;
+      sim.scriptDt = Math.max(0, Math.min(sim.burstTime, dur) - start);
+      // A 60 Hz sum can land a hair short of the phase end and never quite cross it.
+      if (start < dur && sim.burstTime >= dur - 1e-8) {
+        sim.scriptDt = Math.max(0, dur - start);
+        sim.scriptEnded = true;
+        endScript(sim, kind, held);
       }
     } else if (isHurdle(sim.burst)) {
       sim.hurdleT0 = start;
@@ -529,7 +819,11 @@ function trackBurst(
     return { action, motion, jukeDt, jukeEnded: null };
   }
   if (hurdleEnded) return { action: "carry", motion, jukeDt, jukeEnded: null };
-  if (held !== "carry") return { action: held, motion, jukeDt, jukeEnded: null };
+  if (sim.scriptEnded) {
+    const action = sim.moveSpent && held === sim.moveSpent ? "carry" : held !== "carry" ? shownHeld(held, sim) : "carry";
+    return { action, motion: NO_SPECIAL, jukeDt, jukeEnded: null };
+  }
+  if (held !== "carry") return { action: shownHeld(held, sim), motion, jukeDt, jukeEnded: null };
   if (stepped || (sim.burst !== "carry" && sim.burstTime < dur)) return { action: sim.burst, motion, jukeDt, jukeEnded: null };
   sim.burst = "carry";
   sim.burstTime = 0;
@@ -574,7 +868,7 @@ function syncCarrierPose(sim: Sim, action: CarrierAction, distance: number) {
   const firstHurdle = sim.hurdleType ?? oppositeStride(sim.strideType);
   const hurdleShown = sim.burstTime < HURDLE_PHASE ? firstHurdle : oppositeStride(firstHurdle);
   const shown = isHurdle(action) ? hurdleShown : sim.strideType;
-  sim.pose = carrierPoseName(action, shown, action === "dive" ? sim.burstTime : 0);
+  sim.pose = carrierPoseName(action, shown, action === "dive" || isScript(action) ? sim.burstTime : 0);
 }
 
 /** Advance the controlled player, then keep bodies from overlapping. */
@@ -582,6 +876,7 @@ export function step(sim: Sim, input: Input, dt: number) {
   const carrier = controlledPlayer(sim);
   if (!carrier) return;
   const bounded = dt > 0 ? Math.min(dt, 0.05) : 0;
+  noteSpinSteer(sim, carrier, input, bounded);
   if (bounded > 0 && sim.diveRecover > 0) sim.diveRecover = Math.max(0, sim.diveRecover - bounded);
   const tracked = trackBurst(sim, input.action, bounded, carrier);
   let poseAction = tracked.action;
@@ -590,6 +885,7 @@ export function step(sim: Sim, input: Input, dt: number) {
   if (chaining && (jukeEnded || jukeDt === 0)) poseAction = input.sprint ? "sprint" : "carry";
   if (sim.diveChain && input.action === "dive") poseAction = input.sprint ? "sprint" : "carry";
   if (sim.hurdleChain && input.action === sim.hurdleChain) poseAction = input.sprint ? "sprint" : "carry";
+  if (sim.moveSpent && input.action === sim.moveSpent) poseAction = input.sprint ? "sprint" : "carry";
   let strideDist = 0;
   if (bounded > 0) {
     let mx = input.x;
@@ -617,8 +913,24 @@ export function step(sim: Sim, input: Input, dt: number) {
         carrier.facingYard = my / mag;
       }
     }
-    const freeDt = bounded - jukeDt;
-    const freeMotion = jukeDt > 0 ? NO_SPECIAL : motion;
+    let scriptFacing: { x: number; y: number } | null = null;
+    if (sim.scriptDt > 0 && sim.scriptKind) {
+      const delta = scriptDelta(sim, sim.scriptKind, sim.scriptT0, sim.scriptT0 + sim.scriptDt);
+      moveX += delta.x;
+      moveY += delta.y;
+      scriptFacing = delta.facing;
+      if (!scriptFacing && (sim.scriptKind === "shakeL" || sim.scriptKind === "shakeR") && mag > 0.001) {
+        carrier.facingX = mx / mag;
+        carrier.facingYard = my / mag;
+      }
+    }
+    if (scriptFacing) {
+      carrier.facingX = scriptFacing.x;
+      carrier.facingYard = scriptFacing.y;
+    }
+    const scriptOwnsFrame = sim.scriptKind !== null && !sim.scriptEnded;
+    const freeDt = scriptOwnsFrame ? 0 : Math.max(0, bounded - jukeDt - sim.scriptDt);
+    const freeMotion = jukeDt > 0 || sim.scriptDt > 0 ? NO_SPECIAL : motion;
     let startedJuke = false;
     // A held hurdle covers the gap on foot, then the next leap starts along velocity.
     const spendHurdleGap = (vx: number, vy: number, span: number, moved: number) => {
@@ -771,7 +1083,7 @@ export function step(sim: Sim, input: Input, dt: number) {
       }
       spendHurdleGap(vx, vy, freeDt, moved);
     }
-    if (jukeDt > 0 && !jukeEnded && !startedJuke) strideDist = 0;
+    if ((jukeDt > 0 && !jukeEnded && !startedJuke) || (sim.scriptDt > 0 && !sim.scriptEnded)) strideDist = 0;
     if (moveX !== 0 || moveY !== 0) {
       sim.velX = moveX;
       sim.velY = moveY;
