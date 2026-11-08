@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ThreeEvent } from "@react-three/fiber";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import {
   Box3,
   CanvasTexture,
@@ -14,7 +14,7 @@ import {
   type Object3D,
   type Texture,
 } from "three";
-import { applyPoseJoints } from "./poseOverrides";
+import { applyPoseJoints, resetPoseJoints } from "./poseOverrides";
 import { POSE_JOINTS, REST_POSITION, type PoseJointId } from "./pose";
 import {
   forearmColor,
@@ -74,6 +74,10 @@ export function PlayerFigure({
 }) {
   const jointRefs = useRef<Partial<Record<PoseJointId, Object3D | null>>>({});
   const alignRef = useRef<Group>(null);
+  const posed = useRef(false);
+  const appliedPose = useRef<string | undefined>(undefined);
+  const poseName = useRef(pose);
+  poseName.current = pose;
   const clickRef = useRef(onJointClick);
   clickRef.current = onJointClick;
   const register = useCallback((id: PoseJointId, node: Object3D | null) => {
@@ -93,11 +97,34 @@ export function PlayerFigure({
     onJointRefs({ ...jointRefs.current });
   }, [onJointRefs, kit, number, controlled, carry, ballSide]);
 
-  useLayoutEffect(() => {
-    if (!pose) return;
-    applyPoseJoints(pose, jointRefs.current);
+  const paintPose = useCallback(() => {
+    const name = poseName.current;
+    if (!name) {
+      if (posed.current) {
+        resetPoseJoints(jointRefs.current);
+        posed.current = false;
+        appliedPose.current = undefined;
+      }
+      if (alignRef.current) alignRef.current.userData.figurePose = "";
+      return;
+    }
+    // Joint refs attach during commit. A layout pass can run before they exist
+    // and leave the bind pose up. Retry once the body group is actually there.
+    if (!jointRefs.current.body) return;
+    if (alignRef.current) alignRef.current.userData.figurePose = name;
+    if (appliedPose.current === name) return;
+    appliedPose.current = name;
+    posed.current = true;
+    applyPoseJoints(name, jointRefs.current);
     if (controlled) centerFigureOnRing(alignRef.current);
-  }, [pose, carry, ballSide, controlled]);
+  }, [controlled]);
+
+  useLayoutEffect(() => {
+    appliedPose.current = undefined;
+    paintPose();
+  }, [paintPose, pose, carry, ballSide, controlled]);
+
+  useFrame(paintPose);
 
   const selectPart = useCallback((event: ThreeEvent<MouseEvent>) => {
     const pick = clickRef.current;
@@ -122,7 +149,7 @@ export function PlayerFigure({
           <meshBasicMaterial color="#f4efe4" side={DoubleSide} />
         </mesh>
       ) : null}
-      <group ref={alignRef}>
+      <group ref={alignRef} name={FIGURE_ALIGN}>
       <Joint id="body" register={register}>
         <Joint id="hips" register={register}>
           {/* Inside the jersey on every side, so the hem is one jersey edge. */}
@@ -298,14 +325,17 @@ function Arm({
   );
 }
 
-const BALL_R = 0.206;
+/** Leather sphere before the carry scale. The long axis is local X. */
+export const FOOTBALL_RADIUS = 0.206;
+/** Align group on a field figure. The sim reads `userData.figurePose` from it. */
+export const FIGURE_ALIGN = "figure-align";
 /** Volume is 0.6 * 0.7 of the base ball: a 40% cut, then another 30%. */
 const BALL_SCALE = Math.cbrt(0.6 * 0.7);
 const LACE = "#f4f1ea";
 const LACE_HALF = 0.145;
 
 function laceHeight(x: number) {
-  return Math.sqrt(Math.max(0, BALL_R * BALL_R - x * x));
+  return Math.sqrt(Math.max(0, FOOTBALL_RADIUS * FOOTBALL_RADIUS - x * x));
 }
 
 const CROSS_LACES = Array.from({ length: 8 }, (_, i) => {
@@ -334,9 +364,9 @@ const LONG_LACE = Array.from({ length: 10 }, (_, i) => {
 
 function Football() {
   return (
-    <group scale={[1.25 * BALL_SCALE, 0.78 * BALL_SCALE, 0.78 * BALL_SCALE]}>
+    <group name="football-body" scale={[1.25 * BALL_SCALE, 0.78 * BALL_SCALE, 0.78 * BALL_SCALE]}>
       <mesh>
-        <sphereGeometry args={[BALL_R, 48, 32]} />
+        <sphereGeometry args={[FOOTBALL_RADIUS, 48, 32]} />
         <meshStandardMaterial color="#6b3a2a" roughness={0.55} />
       </mesh>
       {LONG_LACE.map((lace) => (
@@ -636,64 +666,265 @@ function mainGlyph(mask: Uint8Array, w: number, h: number) {
   return glyph;
 }
 
-/** The reference glyph in the kit color, plus one trim and nothing outside it. */
-function paintDigit(
-  target: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  fill: string,
-  outline: string,
-  dx: number,
-  dy: number,
-  dw: number,
-  dh: number,
-) {
-  const w = Math.max(1, Math.ceil(dw));
-  const h = Math.max(1, Math.ceil(dh));
+const NUMBER_H = 480;
+
+type DigitStamp = {
+  w: number;
+  h: number;
+  /** 0 empty, 1 fill, 2 the single outline ring. */
+  kind: Uint8Array;
+};
+
+const stamps = new Map<number, DigitStamp>();
+const tintedDigits = new Map<string, HTMLCanvasElement>();
+const diskByTrim = new Map<number, Int16Array>();
+
+function diskOffsets(trim: number) {
+  const cached = diskByTrim.get(trim);
+  if (cached) return cached;
+  const t2 = trim * trim;
+  const list: number[] = [];
+  for (let oy = -trim; oy <= trim; oy++) {
+    for (let ox = -trim; ox <= trim; ox++) {
+      if (ox * ox + oy * oy <= t2) list.push(ox, oy);
+    }
+  }
+  const offsets = Int16Array.from(list);
+  diskByTrim.set(trim, offsets);
+  return offsets;
+}
+
+/**
+ * Same fill-plus-one-ring as the old per-pixel search. The ring is stamped
+ * from the glyph edge, once per digit, and reused for every jersey color.
+ */
+function stampFor(digit: number, image: HTMLImageElement): DigitStamp | null {
+  const cached = stamps.get(digit);
+  if (cached) return cached;
+  const h = NUMBER_H;
+  const w = Math.max(1, Math.round(h * (image.width / image.height)));
   const scratch = document.createElement("canvas");
   scratch.width = w;
   scratch.height = h;
-  const g = scratch.getContext("2d");
-  if (!g) return;
+  const g = scratch.getContext("2d", { willReadFrequently: true });
+  if (!g) return null;
   g.drawImage(image, 0, 0, w, h);
   const src = g.getImageData(0, 0, w, h).data;
   const mask = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) mask[i] = (src[i * 4 + 3] ?? 0) > 160 ? 1 : 0;
   const glyph = mainGlyph(mask, w, h);
   const trim = Math.max(2, Math.round(h * 0.018));
-  const out = g.createImageData(w, h);
-  const [fr, fg, fb] = colorChannels(fill);
-  const [or, og, ob] = colorChannels(outline);
-  const t2 = trim * trim;
+  const offsets = diskOffsets(trim);
+  const kind = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
+    const row = y * w;
     for (let x = 0; x < w; x++) {
-      const here = glyph[y * w + x] === 1;
-      let edge = false;
-      if (!here) {
-        for (let oy = -trim; oy <= trim && !edge; oy++) {
-          const yy = y + oy;
-          if (yy < 0 || yy >= h) continue;
-          const row = yy * w;
-          for (let ox = -trim; ox <= trim; ox++) {
-            if (ox * ox + oy * oy > t2) continue;
-            const xx = x + ox;
-            if (xx < 0 || xx >= w) continue;
-            if (glyph[row + xx] === 1) {
-              edge = true;
-              break;
-            }
+      const i = row + x;
+      if (glyph[i] !== 1) continue;
+      kind[i] = 1;
+      let boundary = x === 0 || y === 0 || x === w - 1 || y === h - 1;
+      if (!boundary) {
+        for (let oy = -1; oy <= 1 && !boundary; oy++) {
+          for (let ox = -1; ox <= 1; ox++) {
+            if (glyph[(y + oy) * w + (x + ox)] !== 1) boundary = true;
           }
         }
       }
-      if (!here && !edge) continue;
-      const i = (y * w + x) * 4;
-      out.data[i] = here ? (fr ?? 0) : (or ?? 0);
-      out.data[i + 1] = here ? (fg ?? 0) : (og ?? 0);
-      out.data[i + 2] = here ? (fb ?? 0) : (ob ?? 0);
-      out.data[i + 3] = 255;
+      if (!boundary) continue;
+      for (let k = 0; k < offsets.length; k += 2) {
+        const xx = x + (offsets[k] ?? 0);
+        const yy = y + (offsets[k + 1] ?? 0);
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const j = yy * w + xx;
+        if (kind[j] === 0) kind[j] = 2;
+      }
     }
   }
+  const stamp = { w, h, kind };
+  stamps.set(digit, stamp);
+  return stamp;
+}
+
+function tintedDigit(digit: number, image: HTMLImageElement, fill: string, outline: string) {
+  const key = `${digit}|${fill}|${outline}`;
+  const cached = tintedDigits.get(key);
+  if (cached) return cached;
+  const stamp = stampFor(digit, image);
+  if (!stamp) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = stamp.w;
+  canvas.height = stamp.h;
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  const out = g.createImageData(stamp.w, stamp.h);
+  const [fr, fg, fb] = colorChannels(fill);
+  const [or, og, ob] = colorChannels(outline);
+  for (let i = 0; i < stamp.kind.length; i++) {
+    const kind = stamp.kind[i];
+    if (!kind) continue;
+    const p = i * 4;
+    const on = kind === 1;
+    out.data[p] = on ? (fr ?? 0) : (or ?? 0);
+    out.data[p + 1] = on ? (fg ?? 0) : (og ?? 0);
+    out.data[p + 2] = on ? (fb ?? 0) : (ob ?? 0);
+    out.data[p + 3] = 255;
+  }
   g.putImageData(out, 0, 0);
-  target.drawImage(scratch, dx, dy);
+  tintedDigits.set(key, canvas);
+  return canvas;
+}
+
+type DrawnNumber = {
+  texture: CanvasTexture;
+  width: number;
+  height: number;
+};
+
+type NumberEntry = {
+  refs: number;
+  drop: number;
+  drawn: DrawnNumber | null;
+};
+
+const numberCache = new Map<string, NumberEntry>();
+const numberListeners = new Set<() => void>();
+const numberQueue: Array<{ key: string; number: number; fill: string; outline: string }> = [];
+const numberQueued = new Set<string>();
+let numberPump = false;
+let numberPumpAt = 0;
+
+function numberKey(number: number, fill: string, outline: string) {
+  return `${number}|${fill}|${outline}`;
+}
+
+function subscribeNumbers(listener: () => void) {
+  numberListeners.add(listener);
+  return () => numberListeners.delete(listener);
+}
+
+function peekNumber(number: number, fill: string, outline: string) {
+  return numberCache.get(numberKey(number, fill, outline))?.drawn ?? null;
+}
+
+function emitNumbers() {
+  for (const listener of numberListeners) listener();
+}
+
+function composeNumber(number: number, fill: string, outline: string, images: HTMLImageElement[]) {
+  const text = String(number);
+  const gap = Math.round(NUMBER_H * 0.08);
+  const pad = Math.round(NUMBER_H * 0.06);
+  const cells: HTMLCanvasElement[] = [];
+  for (const ch of text) {
+    const digit = Number(ch);
+    const image = images[digit];
+    if (!image) return null;
+    const tinted = tintedDigit(digit, image, fill, outline);
+    if (!tinted) return null;
+    cells.push(tinted);
+  }
+  const totalW = cells.reduce((sum, cell) => sum + cell.width, 0) + gap * Math.max(0, cells.length - 1);
+  const canvas = document.createElement("canvas");
+  canvas.width = totalW + pad * 2;
+  canvas.height = NUMBER_H + pad * 2;
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  let x = pad;
+  for (const cell of cells) {
+    g.drawImage(cell, x, pad);
+    x += cell.width + gap;
+  }
+  return {
+    canvas,
+    width: 0.44,
+    height: 0.44 * (canvas.height / canvas.width),
+  };
+}
+
+function startNumberPump() {
+  if (numberPump) return;
+  numberPump = true;
+  numberPumpAt = performance.now();
+  requestAnimationFrame(pumpNumbers);
+}
+
+function pumpNumbers() {
+  const images = loadedDigits;
+  if (!images) {
+    numberPump = false;
+    return;
+  }
+  const start = performance.now();
+  let built = 0;
+  while (numberQueue.length > 0 && performance.now() - start < 8) {
+    const job = numberQueue.shift();
+    if (!job) break;
+    numberQueued.delete(job.key);
+    const entry = numberCache.get(job.key);
+    if (!entry || entry.refs <= 0 || entry.drawn) continue;
+    const composed = composeNumber(job.number, job.fill, job.outline, images);
+    if (!composed) continue;
+    const texture = new CanvasTexture(composed.canvas);
+    texture.colorSpace = SRGBColorSpace;
+    texture.needsUpdate = true;
+    entry.drawn = { texture, width: composed.width, height: composed.height };
+    built += 1;
+  }
+  if (built > 0) emitNumbers();
+  if (numberQueue.length > 0) {
+    requestAnimationFrame(pumpNumbers);
+    return;
+  }
+  numberPump = false;
+  const textures = [...numberCache.values()].filter((entry) => entry.drawn).length;
+  console.log("[numbers] cache filled", {
+    textures,
+    stamps: stamps.size,
+    ms: Math.round(performance.now() - numberPumpAt),
+  });
+}
+
+function enqueueNumber(key: string, number: number, fill: string, outline: string) {
+  if (numberQueued.has(key) || numberCache.get(key)?.drawn) return;
+  numberQueued.add(key);
+  numberQueue.push({ key, number, fill, outline });
+  void loadDigits()
+    .then(() => startNumberPump())
+    .catch(() => {});
+}
+
+/** Share one texture for a number and kit color. Front and back both retain it. */
+function retainNumber(number: number, fill: string, outline: string) {
+  const key = numberKey(number, fill, outline);
+  let entry = numberCache.get(key);
+  if (!entry) {
+    entry = { refs: 0, drop: 0, drawn: null };
+    numberCache.set(key, entry);
+  }
+  if (entry.drop) {
+    cancelAnimationFrame(entry.drop);
+    entry.drop = 0;
+  }
+  entry.refs += 1;
+  if (!entry.drawn) enqueueNumber(key, number, fill, outline);
+  return () => {
+    entry.refs -= 1;
+    if (entry.refs > 0) return;
+    entry.drop = requestAnimationFrame(() => {
+      entry.drop = 0;
+      if (entry.refs > 0) return;
+      entry.drawn?.texture.dispose();
+      if (numberCache.get(key) === entry) numberCache.delete(key);
+      const index = numberQueue.findIndex((job) => job.key === key);
+      if (index >= 0) numberQueue.splice(index, 1);
+      numberQueued.delete(key);
+    });
+  };
+}
+
+if (typeof window !== "undefined") {
+  void loadDigits().catch((err) => console.error("[numbers] digit load failed", err));
 }
 
 function JerseyNumber({
@@ -709,51 +940,12 @@ function JerseyNumber({
   position: [number, number, number];
   rotation: [number, number, number];
 }) {
-  const [digits, setDigits] = useState<HTMLImageElement[] | null>(loadedDigits);
-  useEffect(() => {
-    if (digits) return;
-    let live = true;
-    loadDigits().then((images) => {
-      if (live) setDigits(images);
-    });
-    return () => {
-      live = false;
-    };
-  }, [digits]);
-
-  const drawn = useMemo(() => {
-    if (!digits) return null;
-    const text = String(number);
-    const targetH = 480;
-    const gap = Math.round(targetH * 0.08);
-    const pad = Math.round(targetH * 0.06);
-    const cells = [...text].map((ch) => {
-      const image = digits[Number(ch)];
-      if (!image) return null;
-      const w = Math.round(targetH * (image.width / image.height));
-      return { image, w };
-    });
-    if (cells.some((cell) => !cell)) return null;
-    const known = cells.filter((cell): cell is { image: HTMLImageElement; w: number } => cell !== null);
-    const totalW = known.reduce((sum, cell) => sum + cell.w, 0) + gap * Math.max(0, known.length - 1);
-    const canvas = document.createElement("canvas");
-    canvas.width = totalW + pad * 2;
-    canvas.height = targetH + pad * 2;
-    const g = canvas.getContext("2d");
-    if (!g) throw new Error("Missing 2D context");
-    g.clearRect(0, 0, canvas.width, canvas.height);
-    let x = pad;
-    for (const cell of known) {
-      paintDigit(g, cell.image, fill, outline, x, pad, cell.w, targetH);
-      x += cell.w + gap;
-    }
-    const texture = new CanvasTexture(canvas);
-    texture.colorSpace = SRGBColorSpace;
-    texture.needsUpdate = true;
-    return { texture, width: 0.44, height: 0.44 * (canvas.height / canvas.width) };
-  }, [digits, number, fill, outline]);
-
-  useEffect(() => () => drawn?.texture.dispose(), [drawn]);
+  const drawn = useSyncExternalStore(
+    subscribeNumbers,
+    () => peekNumber(number, fill, outline),
+    () => null,
+  );
+  useEffect(() => retainNumber(number, fill, outline), [number, fill, outline]);
   if (!drawn) return null;
   return (
     <mesh position={position} rotation={rotation}>

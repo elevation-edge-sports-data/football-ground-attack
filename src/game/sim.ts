@@ -58,6 +58,11 @@ export type Sim = {
   ballYard: number;
   /** Yard line of the line of scrimmage. Offense is south of it. */
   los: number;
+  /**
+   * Set when the assignment layer records a play-ending tackle.
+   * `step` does not read this. The six-player preview leaves it false.
+   */
+  playOver: boolean;
   /** Step currently under the ball carrier. 1 is left leg forward. */
   strideType: StrideType;
   /** Yards traveled since the last stride flip. */
@@ -168,6 +173,7 @@ export function createSim(): Sim {
   const qb = player("qb", "off", "QB", mid, los - 1.8, true);
   const sim: Sim = {
     los,
+    playOver: false,
     ballX: qb.x,
     ballYard: qb.yard,
     strideType: 1,

@@ -13811,6 +13811,10 @@ function drawMiniPreview(canvas, kind) {
 		Field.pylonYards().forEach((yy) => { drawPylon(yy, "L"); drawPylon(yy, "R"); });
 		drawGoalPosts();
 		strokeWorld(fl, playStartYard, fr, playStartYard, "#3b82f6", 2.6);
+		const chainYard = Math.min(Field.northGoal, playStartYard + 10);
+		if (chainYard > playStartYard && chainYard <= Field.northGoal) {
+			strokeWorld(fl, chainYard, fr, chainYard, "#fbbf24", 2.6);
+		}
 		strokeWorld(fl, Field.southGoal, fl, Field.northGoal, "rgba(255,255,255,0.4)", 2.5);
 		strokeWorld(fr, Field.southGoal, fr, Field.northGoal, "rgba(255,255,255,0.4)", 2.5);
 		strokeWorld(fl, 20, fl, 80, "rgba(236,240,230,0.92)", Math.max(5, SCALE_X * .28));

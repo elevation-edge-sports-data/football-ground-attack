@@ -26,6 +26,14 @@ export const SOUTH_BACK = -FIELD.endZone;
 export const NORTH_BACK = FIELD.length + FIELD.endZone;
 
 /**
+ * How far a spot may sit past either goal line.
+ * Goal lines are yard 0 and yard 100. Just outside is this far into the end zone.
+ */
+export const SPOT_PAST_GOAL = 0.5;
+export const SPOT_YARD_MIN = -SPOT_PAST_GOAL;
+export const SPOT_YARD_MAX = FIELD.length + SPOT_PAST_GOAL;
+
+/**
  * Playable ground past the painted field.
  * Sidelines are x = 0 and x = width. End lines are the back of each end zone.
  * Players are not pinned to the paint; they stop at this outer rectangle.

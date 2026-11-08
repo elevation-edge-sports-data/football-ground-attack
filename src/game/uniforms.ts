@@ -120,18 +120,18 @@ export function getUniformSelection() {
   return selection;
 }
 
-function otherKit(id: number) {
-  return UNIFORMS.find((kit) => kit.id !== id)?.id ?? 0;
-}
-
+/**
+ * A free kit stays on the other side. A kit the other side already wears
+ * is swapped, so the two sides never match.
+ */
 export function selectOffenseKit(id: number) {
-  const defId = selection.defId === id ? otherKit(id) : selection.defId;
+  const defId = selection.defId === id ? selection.offId : selection.defId;
   selection = { offId: id, defId };
   emit();
 }
 
 export function selectDefenseKit(id: number) {
-  const offId = selection.offId === id ? otherKit(id) : selection.offId;
+  const offId = selection.offId === id ? selection.defId : selection.offId;
   selection = { offId, defId: id };
   emit();
 }

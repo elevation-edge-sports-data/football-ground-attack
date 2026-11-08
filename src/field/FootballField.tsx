@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
+  BoxGeometry,
   CanvasTexture,
+  CylinderGeometry,
   Mesh,
   MeshStandardMaterial,
   SRGBColorSpace,
@@ -10,9 +12,25 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { buildMarkings, buildTurfGeometry } from "./ground";
-import { FIELD, NORTH_BACK, SOUTH_BACK, layFlat, yardLabel } from "./spec";
+import { FIELD, NORTH_BACK, SOUTH_BACK, hashHalf, layFlat, yardLabel } from "./spec";
 
 const NUMBER_Y = 0.04;
+
+/** 18″ × 4″ × 4″. The whole post is the base color #f97316. */
+const PYLON_H = 18 / 36;
+const PYLON_W = 4 / 36;
+/** Clears the end-zone stripe at y = 0.006 so the base sits on the turf. */
+const PYLON_BASE = 0.02;
+
+/** field.js crossbarH, uprightH, and postSetback. drawGoalPostAt uses the same numbers. */
+const CROSS_H = 3.4;
+const UPRIGHT_H = 10.2;
+const POST_SETBACK = 1.15;
+/**
+ * Canvas tubes are screen-pixel strokes in #f5d445.
+ * This radius stays a pipe at the follow camera and stays off the pylons.
+ */
+const POST_R = 0.15;
 
 function makeLines(positions: Float32Array, color: string, linewidth: number) {
   const geometry = new LineSegmentsGeometry();
@@ -108,6 +126,87 @@ function YardNumber({
   );
 }
 
+/** Eight corners: Field.pylonYards() on both sidelines. World Z is −yard. */
+function pylonSpots() {
+  const yards = [SOUTH_BACK, 0, FIELD.length, NORTH_BACK];
+  const spots: { key: string; position: [number, number, number] }[] = [];
+  for (const yard of yards) {
+    for (const x of [0, FIELD.width]) {
+      spots.push({ key: `${x}:${yard}`, position: [x, 0, -yard] });
+    }
+  }
+  return spots;
+}
+
+function EndZonePylons() {
+  const geo = useMemo(() => new BoxGeometry(PYLON_W, PYLON_H, PYLON_W), []);
+  const mat = useMemo(
+    () => new MeshStandardMaterial({ color: "#f97316", roughness: 0.55, metalness: 0 }),
+    [],
+  );
+  const spots = useMemo(() => pylonSpots(), []);
+
+  return (
+    <group>
+      {spots.map((spot) => (
+        <mesh
+          key={spot.key}
+          geometry={geo}
+          material={mat}
+          position={[spot.position[0], PYLON_BASE + PYLON_H / 2, spot.position[2]]}
+        />
+      ))}
+    </group>
+  );
+}
+
+/**
+ * One gooseneck behind each back line.
+ * Crossbar and uprights are on that line. The base is postSetback further out.
+ */
+function GoalPosts() {
+  const half = hashHalf();
+  const mid = FIELD.width * 0.5;
+  const mat = useMemo(
+    () => new MeshStandardMaterial({ color: "#f5d445", roughness: 0.4, metalness: 0 }),
+    [],
+  );
+  const uprightGeo = useMemo(() => new CylinderGeometry(POST_R, POST_R, UPRIGHT_H, 12), []);
+  const crossGeo = useMemo(() => new CylinderGeometry(POST_R, POST_R, half * 2, 12), []);
+  const neckGeo = useMemo(() => new CylinderGeometry(POST_R, POST_R, CROSS_H, 12), []);
+  const armGeo = useMemo(() => new CylinderGeometry(POST_R, POST_R, POST_SETBACK, 12), []);
+  const ends = [SOUTH_BACK, NORTH_BACK];
+
+  return (
+    <group>
+      {ends.map((endYard) => {
+        const behind = endYard > FIELD.length * 0.5 ? POST_SETBACK : -POST_SETBACK;
+        const endZ = -endYard;
+        const baseZ = -(endYard + behind);
+        return (
+          <group key={endYard}>
+            <mesh geometry={neckGeo} material={mat} position={[mid, CROSS_H / 2, baseZ]} />
+            <mesh
+              geometry={armGeo}
+              material={mat}
+              position={[mid, CROSS_H, (endZ + baseZ) / 2]}
+              rotation={[Math.PI / 2, 0, 0]}
+            />
+            <mesh
+              geometry={crossGeo}
+              material={mat}
+              position={[mid, CROSS_H, endZ]}
+              rotation={[0, 0, Math.PI / 2]}
+            />
+            <mesh geometry={uprightGeo} material={mat} position={[mid - half, CROSS_H + UPRIGHT_H / 2, endZ]} />
+            <mesh geometry={uprightGeo} material={mat} position={[mid + half, CROSS_H + UPRIGHT_H / 2, endZ]} />
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function yardNumbers() {
   const marks: { yard: number; label: string; big: boolean; numY: number }[] = [];
   const mid = FIELD.length * 0.5;
@@ -152,6 +251,8 @@ export function FootballField() {
         <planeGeometry args={[FIELD.width + 24, apronDepth]} />
       </mesh>
       <mesh geometry={turf} material={turfMaterial} />
+      <EndZonePylons />
+      <GoalPosts />
       <FieldLines />
       <group key={fontTick}>
         {numbers.flatMap((mark) =>
