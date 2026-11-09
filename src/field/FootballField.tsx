@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
   BoxGeometry,
@@ -11,7 +11,25 @@ import {
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import { buildMarkings, buildTurfGeometry } from "./ground";
+import logoUrl from "../../ee-logo.png";
+import {
+  readFieldLook,
+  subscribeFieldLook,
+  type EzArtId,
+  type EzTone,
+  type SurfaceId,
+} from "../game/fieldLook";
+import { kitById, subscribeUniforms, getUniformSelection, type Uniform } from "../game/uniforms";
+import {
+  PATTERN_TILE_YARDS,
+  buildDiamondEdges,
+  buildDiamondGeometry,
+  buildMarkings,
+  buildMountainGeometry,
+  buildSurfacePattern,
+  buildTurfGeometry,
+  surfacePatternOpacity,
+} from "./ground";
 import { FIELD, NORTH_BACK, SOUTH_BACK, hashHalf, layFlat, yardLabel } from "./spec";
 
 const NUMBER_Y = 0.04;
@@ -207,6 +225,255 @@ function GoalPosts() {
   );
 }
 
+/** v10 midfield mark is 10 yards along the image's long axis (`midLogoHalf` is 5). */
+const LOGO_ALONG = 10;
+
+function hexRgb(hex: string) {
+  const h = hex.replace("#", "");
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+/**
+ * v10 `homeLogoReady`. Kit 1 keeps the painted file.
+ * Every other home kit recolors the navy body to the primary and the red mark to the secondary.
+ * Kits 3 and 4 swap those two colors on the logo only.
+ */
+function paintLogo(img: HTMLImageElement, kit: Uniform) {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const g = canvas.getContext("2d");
+  if (!g) return canvas;
+  g.drawImage(img, 0, 0);
+  if (kit.id === 0) return canvas;
+  const image = g.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  const swapLogo = kit.id === 2 || kit.id === 3;
+  const fill = hexRgb(swapLogo ? kit.endSecondary : kit.endPrimary);
+  const mark = hexRgb(swapLogo ? kit.endPrimary : kit.endSecondary);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3]! < 18) continue;
+    const r = data[i]!;
+    const gv = data[i + 1]!;
+    const b = data[i + 2]!;
+    if (r > 200 && gv > 200 && b > 200) continue;
+    if (r > gv + 18 && r > b + 18 && r > 70) {
+      data[i] = mark.r;
+      data[i + 1] = mark.g;
+      data[i + 2] = mark.b;
+    } else {
+      data[i] = fill.r;
+      data[i + 1] = fill.g;
+      data[i + 2] = fill.b;
+    }
+  }
+  g.putImageData(image, 0, 0);
+  return canvas;
+}
+
+function SurfaceGrain({ surface, ezArt }: { surface: SurfaceId; ezArt: EzArtId }) {
+  const map = useMemo(() => buildSurfacePattern(surface), [surface]);
+  const span = ezArt === "solid" ? FIELD.length : NORTH_BACK - SOUTH_BACK;
+  useLayoutEffect(() => {
+    map.repeat.set(FIELD.width / PATTERN_TILE_YARDS, span / PATTERN_TILE_YARDS);
+    map.needsUpdate = true;
+  }, [map, span]);
+  useEffect(() => () => map.dispose(), [map]);
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[FIELD.width / 2, 0.008, -FIELD.length / 2]} renderOrder={1}>
+      <planeGeometry args={[FIELD.width, span]} />
+      <meshStandardMaterial
+        map={map}
+        transparent
+        opacity={surfacePatternOpacity(surface)}
+        roughness={1}
+        metalness={0}
+        depthWrite={false}
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
+      />
+    </mesh>
+  );
+}
+
+/** One flat color across each end zone. Solid is opaque. Mountains wash the primary at v10's 0.86. */
+function EndZoneWash({ color, opacity }: { color: string; opacity: number }) {
+  const solid = opacity >= 1;
+  return (
+    <group>
+      {[5, -105].map((z) => (
+        <mesh key={z} position={[FIELD.width / 2, 0.012, z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
+          <planeGeometry args={[FIELD.width, FIELD.endZone]} />
+          <meshStandardMaterial
+            color={color}
+            transparent={!solid}
+            opacity={opacity}
+            roughness={0.95}
+            metalness={0}
+            depthWrite={solid}
+            polygonOffset
+            polygonOffsetFactor={-2}
+            polygonOffsetUnits={-2}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function DiamondEndZones({ primary, secondary }: { primary: string; secondary: string }) {
+  const geometry = useMemo(() => buildDiamondGeometry(primary, secondary), [primary, secondary]);
+  const edges = useMemo(() => {
+    const lines = new LineSegmentsGeometry();
+    lines.setPositions(buildDiamondEdges());
+    const material = new LineMaterial({
+      color: "#ffffff",
+      linewidth: 1.15,
+      worldUnits: false,
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+    });
+    const mesh = new LineSegments2(lines, material);
+    mesh.frustumCulled = false;
+    return mesh;
+  }, []);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => {
+    return () => {
+      edges.geometry.dispose();
+      (edges.material as LineMaterial).dispose();
+    };
+  }, [edges]);
+  useFrame(({ gl }) => {
+    (edges.material as LineMaterial).resolution.set(gl.domElement.width, gl.domElement.height);
+  });
+  return (
+    <group renderOrder={2}>
+      <mesh geometry={geometry}>
+        <meshStandardMaterial
+          vertexColors
+          transparent
+          opacity={0.86}
+          roughness={0.95}
+          metalness={0}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
+      </mesh>
+      <primitive object={edges} />
+    </group>
+  );
+}
+
+function MountainEndZones({ color }: { color: string }) {
+  const south = useMemo(() => buildMountainGeometry("south"), []);
+  const north = useMemo(() => buildMountainGeometry("north"), []);
+  useEffect(() => {
+    return () => {
+      south.dispose();
+      north.dispose();
+    };
+  }, [south, north]);
+  return (
+    <group renderOrder={3}>
+      {[south, north].map((geometry, index) => (
+        <mesh key={index} geometry={geometry}>
+          <meshStandardMaterial
+            color={color}
+            transparent
+            opacity={0.8}
+            roughness={0.95}
+            metalness={0}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-3}
+            polygonOffsetUnits={-4}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function EndZones({ art, tone, kit }: { art: EzArtId; tone: EzTone; kit: Uniform }) {
+  const primary = kit.endPrimary;
+  const secondary = kit.endSecondary;
+  if (art === "off") return null;
+  if (art === "solid") {
+    // Kit 1's solid end zone uses orange as primary and blue as secondary.
+    const solidPrimary = kit.id === 0 ? secondary : primary;
+    const solidSecondary = kit.id === 0 ? primary : secondary;
+    return <EndZoneWash color={tone === "secondary" ? solidSecondary : solidPrimary} opacity={1} />;
+  }
+  if (art === "diamonds") return <DiamondEndZones primary={primary} secondary={secondary} />;
+  return (
+    <group>
+      <EndZoneWash color={primary} opacity={0.86} />
+      <MountainEndZones color={secondary} />
+    </group>
+  );
+}
+
+function MidfieldLogo({ kit, north }: { kit: Uniform; north: boolean }) {
+  const mesh = useRef<Mesh>(null);
+  const [paint, setPaint] = useState<{ map: CanvasTexture; width: number; height: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const img = new Image();
+    img.onload = () => {
+      if (!live) return;
+      const canvas = paintLogo(img, kit);
+      const map = new CanvasTexture(canvas);
+      map.colorSpace = SRGBColorSpace;
+      map.anisotropy = 8;
+      map.needsUpdate = true;
+      const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+      // North: image width runs east-west. Otherwise image width runs north-south.
+      const width = north ? LOGO_ALONG * aspect : LOGO_ALONG;
+      const height = north ? LOGO_ALONG : LOGO_ALONG / aspect;
+      setPaint({ map, width, height });
+    };
+    img.src = logoUrl;
+    return () => {
+      live = false;
+    };
+  }, [kit, north]);
+  useEffect(() => () => paint?.map.dispose(), [paint]);
+  useLayoutEffect(() => {
+    if (mesh.current) layFlat(mesh.current, north ? 0 : Math.PI / 2);
+  }, [north, paint]);
+  if (!paint) return null;
+  return (
+    <mesh
+      ref={mesh}
+      position={[FIELD.width / 2, 0.05, -FIELD.length / 2]}
+      renderOrder={4}
+    >
+      <planeGeometry args={[paint.width, paint.height]} />
+      <meshStandardMaterial
+        map={paint.map}
+        transparent
+        opacity={0.96}
+        alphaTest={0.15}
+        roughness={0.9}
+        metalness={0}
+        polygonOffset
+        polygonOffsetFactor={-4}
+        polygonOffsetUnits={-4}
+      />
+    </mesh>
+  );
+}
+
 function yardNumbers() {
   const marks: { yard: number; label: string; big: boolean; numY: number }[] = [];
   const mid = FIELD.length * 0.5;
@@ -219,7 +486,11 @@ function yardNumbers() {
 }
 
 export function FootballField() {
-  const turf = useMemo(() => buildTurfGeometry(), []);
+  const look = useSyncExternalStore(subscribeFieldLook, readFieldLook);
+  const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
+  const home = kitById(kits.offId);
+  const turf = useMemo(() => buildTurfGeometry(look.surface), [look.surface]);
+  useEffect(() => () => turf.dispose(), [turf]);
   const turfMaterial = useMemo(
     () => new MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }),
     [],
@@ -251,6 +522,9 @@ export function FootballField() {
         <planeGeometry args={[FIELD.width + 24, apronDepth]} />
       </mesh>
       <mesh geometry={turf} material={turfMaterial} />
+      <SurfaceGrain surface={look.surface} ezArt={look.ezArt} />
+      <EndZones art={look.ezArt} tone={look.ezTone} kit={home} />
+      {look.logo ? <MidfieldLogo kit={home} north={look.logoNorth} /> : null}
       <EndZonePylons />
       <GoalPosts />
       <FieldLines />

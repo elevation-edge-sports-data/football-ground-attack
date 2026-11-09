@@ -3,7 +3,8 @@ import react from "@vitejs/plugin-react";
 
 /**
  * One classic-script bundle for GitHub Pages.
- * scripts/pack-pages.mjs inlines it into docs/r3f.html and docs/pose-editor.html.
+ * scripts/pack-pages.mjs inlines it into docs/r3f.html, docs/pose-editor.html,
+ * docs/formation-library.html, and docs/replay-viewer.html.
  * An ES module would need a base path and fails on file://; this IIFE does not.
  */
 export default defineConfig({

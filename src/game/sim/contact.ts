@@ -39,6 +39,24 @@ export type BodyContact = {
 
 const clocks = new WeakMap<Player, BodyContact>();
 
+/** Runner yard when he first touches a defender on this snap. */
+let firstContactYard: number | null = null;
+
+export function noteFirstContact(yard: number) {
+  if (firstContactYard == null && Number.isFinite(yard)) firstContactYard = yard;
+}
+
+/** Contact yard for yards-after-contact, then clear it. */
+export function consumeFirstContact(): number | null {
+  const yard = firstContactYard;
+  firstContactYard = null;
+  return yard;
+}
+
+export function resetFirstContact() {
+  firstContactYard = null;
+}
+
 export function contactOf(player: Player): BodyContact {
   let clock = clocks.get(player);
   if (!clock) {
@@ -268,6 +286,7 @@ export function resolveTackle(
     }
     return null;
   }
+  noteFirstContact(carrier.yard);
   if (clock.tackleArmed || clock.engage > 0 || clock.pancake > 0 || clock.recover > 0) return null;
   clock.tackleArmed = true;
   clock.tackleTries += 1;

@@ -104,7 +104,15 @@ export function gloveColor(kit: Uniform) {
 
 type Selection = { offId: number; defId: number };
 
-let selection: Selection = { offId: 0, defId: 1 };
+/** Home stays on kit 1. Away draws any other kit, so the sides never match at load. */
+function awayKitOnLoad(homeId: number): number {
+  const open = UNIFORMS.filter((kit) => kit.id !== homeId);
+  const pick = open[Math.floor(Math.random() * open.length)];
+  return pick?.id ?? (homeId === 0 ? 1 : 0);
+}
+
+const HOME_KIT = 0;
+let selection: Selection = { offId: HOME_KIT, defId: awayKitOnLoad(HOME_KIT) };
 const listeners = new Set<() => void>();
 
 function emit() {

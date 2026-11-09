@@ -2,7 +2,7 @@
  * What the 3D view boots, and the short series that follows a tackle or a score.
  * The default is a full play. `?preview=1` keeps the six-player pose preview.
  */
-import { FIELD, SPOT_YARD_MAX, SPOT_YARD_MIN, clamp, hashLeft, hashRight } from "../../field/spec";
+import { FIELD, SPOT_PAST_GOAL, SPOT_YARD_MAX, SPOT_YARD_MIN, clamp, hashLeft, hashNearSide, hashRight } from "../../field/spec";
 import { createSim, type Player, type Sim } from "../sim";
 import { attachAssignments, type AssignedPlay } from "./assign";
 import { applyPresnapLook, spreadInteriorDefense } from "./look";
@@ -12,9 +12,12 @@ import { createPlaySim, hashSnapX, placeEntitiesForNewPlay, sideYardToAbsolute, 
 import { DEF_SCHEMES, OFF_PLAYS } from "./plays";
 import { setReplayCamera } from "../replayCamera";
 import { playDiagram, type PlayDiagram } from "../snapArt";
+import { consumeFirstContact, resetFirstContact } from "./contact";
 
-/** Canvas game mode starts at 2:00 and only runs while a play is live. */
-export const GAME_CLOCK_SECONDS = 120;
+/** Four quarters. The banner quarter stays on the 4th; the clock still rolls all four. */
+export const QUARTER_COUNT = 4;
+/** Each quarter is 30 seconds and only runs while a play is live. */
+export const QUARTER_SECONDS = 30;
 
 /** Canvas game opening LOS. Blast and Quarters are the first authored calls. */
 export const BOOT_PLAY = {
@@ -24,7 +27,18 @@ export const BOOT_PLAY = {
 };
 
 export type Scoreboard = {
-  score: number;
+  /** Offense. An offensive touchdown is 7. */
+  youScore: number;
+  /** Defense. A defensive touchdown is 8. */
+  cpuScore: number;
+  /** Sum of snap yardage. A loss reduces it. */
+  totalYards: number;
+  /** First downs only. A touchdown is not one. */
+  firstDowns: number;
+  /** Offensive touchdowns. */
+  touchdowns: number;
+  /** Sum of yards after the runner first touched a defender. */
+  yac: number;
   over: boolean;
   /** Touchdown, Gain, Loss, or No gain. Empty during a live play. */
   title: string;
@@ -33,10 +47,16 @@ export type Scoreboard = {
   schemeName: string;
   /** True while the post-play scrub is showing recorded frames. */
   replay: boolean;
-  /** Seconds left on the game clock. */
+  /** Seconds left in the current quarter. */
   clock: number;
+  /** 1 through 4. The HUD reads this. Scores are not cleared when it changes. */
+  quarter: number;
   /** Situation for the snap in progress, or the next snap after a whistle. */
   downText: string;
+  /** Absolute yard of that snap. The banner shows it as a field yard line. */
+  ballOn: number;
+  /** Home attacks north. The banner triangle points up for home and down for away. */
+  homePossession: boolean;
   /** Fourth down failed. Further snaps are refused, same as a clock at 0:00. */
   seriesOver: boolean;
   /** Wings shares the carrier stick. Independent and Classic use the blocker stick. */
@@ -87,6 +107,8 @@ let stageDownText = "1st & 10";
 
 type GameHold = {
   clockLeft: number;
+  /** 1-based quarter that was running when the hold was taken. */
+  quarter: number;
   down: number;
   toGo: number;
   seriesOver: boolean;
@@ -118,23 +140,37 @@ const practiceListeners = new Set<() => void>();
 const stageListeners = new Set<() => void>();
 let pendingStage: { sim: Sim; assigned: AssignedPlay; dead: boolean } | null = null;
 let board: Scoreboard = {
-  score: 0,
+  youScore: 0,
+  cpuScore: 0,
+  totalYards: 0,
+  firstDowns: 0,
+  touchdowns: 0,
+  yac: 0,
   over: false,
   title: "",
   detail: "",
   playName: BOOT_PLAY.play.name,
   schemeName: BOOT_PLAY.scheme.name,
   replay: false,
-  clock: GAME_CLOCK_SECONDS,
+  clock: QUARTER_SECONDS,
+  quarter: 1,
   downText: "1st & 10",
+  ballOn: BOOT_PLAY.los,
+  homePossession: true,
   seriesOver: false,
   profile: "wings",
   paused: false,
   awaitSnap: false,
   mode: "game",
 };
-/** Remaining game time. The board copy updates when the displayed second changes. */
-let clockLeft = GAME_CLOCK_SECONDS;
+/** Seconds left in the current quarter. The board copy updates when the displayed second changes. */
+let clockLeft = QUARTER_SECONDS;
+/** 1-based live quarter. The HUD shows this. A new game is the only reset. */
+let quarter = 1;
+/** Set when a whistle rolls the clock into a new quarter. Cleared once that spot is applied. */
+let enteredQuarter: number | null = null;
+/** Absolute yard line. Home attacks north, so the home 25 is yard 25. */
+const HOME_25 = 25;
 let down = 1;
 let toGo = 10;
 let seriesOver = false;
@@ -268,9 +304,10 @@ export function setSessionMode(next: SessionMode) {
       practiceScheme = schemeIndex;
       practiceSeeded = true;
     }
-    const continuing = board.over && pendingSpot != null && clockLeft > 0 && !seriesOver;
+    const continuing = board.over && pendingSpot != null && !clockExpired() && !seriesOver;
     gameHold = {
       clockLeft,
+      quarter,
       down,
       toGo,
       seriesOver,
@@ -289,6 +326,7 @@ export function setSessionMode(next: SessionMode) {
     stageDead = false;
   } else if (gameHold) {
     clockLeft = gameHold.clockLeft;
+    quarter = gameHold.quarter;
     down = gameHold.down;
     toGo = gameHold.toGo;
     seriesOver = gameHold.seriesOver;
@@ -358,16 +396,30 @@ export function confirmPracticeRespot() {
   else syncPractice();
 }
 
-/** `119.2` is still `2:00`. The displayed second drops after a full second. */
+/**
+ * `119.2` is still `2:00`. The displayed second drops after a full second.
+ * Under one minute the clock shows tenths, `0:29.4`. Zero is `0:00`.
+ */
 export function formatClock(seconds: number): string {
-  const shown = Math.ceil(Math.max(0, seconds) - 1e-6);
-  const minutes = Math.floor(shown / 60);
-  const secs = shown % 60;
-  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+  if (!(seconds > 0)) return "0:00";
+  if (seconds >= 60) {
+    const shown = Math.ceil(seconds - 1e-6);
+    const minutes = Math.floor(shown / 60);
+    const secs = shown % 60;
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
+  }
+  const text = Math.min(seconds, 59.949).toFixed(1);
+  const dot = text.indexOf(".");
+  return `0:${text.slice(0, dot).padStart(2, "0")}.${text.slice(dot + 1)}`;
 }
 
+/** The 4th quarter has hit 0:00. Earlier quarters roll forward at the whistle. */
 export function clockExpired() {
-  return clockLeft <= 0;
+  return quarter >= QUARTER_COUNT && clockLeft <= 0;
+}
+
+export function readAwaitSnap() {
+  return board.awaitSnap;
 }
 
 export function seriesEnded() {
@@ -381,7 +433,7 @@ export function seriesEnded() {
  */
 export function gameEnded() {
   if (sessionMode === "practice") return false;
-  return board.over && (clockLeft <= 0 || seriesOver);
+  return board.over && (clockExpired() || seriesOver);
 }
 
 function downName(value: number) {
@@ -392,11 +444,31 @@ function downName(value: number) {
   return `${value}th`;
 }
 
-/** Whole numbers stay whole. A fractional chain shows one decimal. */
-function formatDistance(distance: number): string {
-  const tenths = Math.round(distance * 10) / 10;
+/** Banner quarter. `1` is `1st`. */
+export function formatQuarter(value: number): string {
+  return downName(value);
+}
+
+/** Whole numbers stay whole. A fractional value shows one decimal. */
+export function formatTenths(value: number): string {
+  const tenths = Math.round(value * 10) / 10;
   if (Math.abs(tenths - Math.round(tenths)) < 1e-6) return String(Math.round(tenths));
   return tenths.toFixed(1);
+}
+
+/** Whole numbers stay whole. A fractional chain shows one decimal. */
+function formatDistance(distance: number): string {
+  return formatTenths(distance);
+}
+
+/**
+ * Field yard line for the banner. Midfield is 50. Either goal line is 0.
+ * 44.8, 45, and 12.3 are the one-decimal form. Whole numbers drop the decimal.
+ */
+export function formatBallOn(absYard: number): string {
+  const yard = Number.isFinite(absYard) ? absYard : 0;
+  const line = yard > FIELD.length * 0.5 ? FIELD.length - yard : yard;
+  return formatTenths(line);
 }
 
 /** "& Goal" only when the line to gain is on or past the goal line. */
@@ -430,10 +502,11 @@ export function readFirstDownYard(los: number): number | null {
 }
 
 /**
- * Count down during a live play. No-ops once the clock is at 0:00.
- * Hitting 0:00 does not end the play or the game. The snap already in
- * progress runs until its own whistle. A new snap is refused after that.
- * Publishes when the banner second changes.
+ * Count down the current quarter during a live play.
+ * Hitting 0:00 does not end the play. That snap runs until its whistle.
+ * A quarter other than the 4th rolls to the next 30 seconds at the whistle.
+ * The 4th quarter refuses another snap after that whistle.
+ * Publishes when the displayed clock changes. Under one minute that is each tenth.
  */
 export function tickClock(dt: number) {
   if (sessionMode === "practice" || clockLeft <= 0 || dt <= 0) return;
@@ -442,6 +515,38 @@ export function tickClock(dt: number) {
   if (formatClock(clockLeft) === before) return;
   board = { ...board, clock: clockLeft };
   publish();
+}
+
+/**
+ * At a whistle, a finished quarter before the 4th starts the next 30 seconds.
+ * Score, down, distance, and the spot are left for the play that just ended.
+ */
+function advanceQuarter() {
+  if (sessionMode === "practice" || clockLeft > 0 || quarter >= QUARTER_COUNT) return;
+  quarter += 1;
+  clockLeft = QUARTER_SECONDS;
+  enteredQuarter = quarter;
+  board = { ...board, clock: clockLeft, quarter };
+}
+
+/**
+ * The third quarter starts at the home 25.
+ * The second keeps the first quarter's last spot, down, and distance.
+ * The fourth keeps the third quarter's last spot, down, and distance.
+ * Points already on the board stay.
+ */
+function placeEnteredQuarter() {
+  const entered = enteredQuarter;
+  enteredQuarter = null;
+  if (entered !== 3 || !pendingSpot || seriesOver) return;
+  pendingSpot = { ...pendingSpot, los: HOME_25 };
+  board = {
+    ...board,
+    ballOn: HOME_25,
+    downText: formatDown(down, toGo, HOME_25),
+    clock: clockLeft,
+    quarter,
+  };
 }
 
 export function onNextPlay(listener: () => void) {
@@ -478,14 +583,27 @@ export function askReplay() {
   for (const listener of replayListeners) listener();
 }
 
+export type ControlProfile = Scoreboard["profile"];
+
+export const CONTROL_PROFILES: { id: ControlProfile; label: string; blurb: string }[] = [
+  { id: "wings", label: "Wings", blurb: "Z/X pick a blocker. The stick drives the carrier and that blocker." },
+  { id: "independent", label: "Independent", blurb: "The stick drives the carrier. U/B/K/O or the right stick drives the blocker." },
+  { id: "classic", label: "Classic", blurb: "The stick drives the carrier. U/B/K/O or the right stick drives the blocker. Stiff-arm is Tab and \\." },
+];
+
 export function readProfile() {
   return board.profile;
 }
 
-export function toggleProfile() {
-  const profile = board.profile === "wings" ? "independent" : board.profile === "independent" ? "classic" : "wings";
+export function setProfile(profile: ControlProfile) {
+  if (board.profile === profile) return;
   board = { ...board, profile };
   publish();
+}
+
+export function toggleProfile() {
+  const profile: ControlProfile = board.profile === "wings" ? "independent" : board.profile === "independent" ? "classic" : "wings";
+  setProfile(profile);
 }
 
 export function readPaused() {
@@ -513,67 +631,165 @@ function touchdownSpot(): number {
   return spots[Math.floor(Math.random() * spots.length)] ?? 50;
 }
 
-/** Practice keeps the score and the result line. It does not move the series or the next spot. */
-function settlePracticePlay(yard: number, los: number, measure: number, ballSpot: boolean) {
-  if (yard >= FIELD.length) {
-    const gained = Math.max(0, Math.round(yard - los));
+const OFFENSE_TOUCHDOWN_POINTS = 7;
+const DEFENSE_TOUCHDOWN_POINTS = 8;
+/** Defense scores 2 when the offense is downed in its own end zone. */
+const SAFETY_POINTS = 2;
+/**
+ * Next snap after a safety. The goal line is yard 0. This is on the field,
+ * just outside that line, not in the end zone.
+ */
+const SAFETY_SPOT_YARD = SPOT_PAST_GOAL;
+
+function tenth(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+/** Same tenths as the down-and-distance line. Whole numbers stay whole. */
+function gainLabel(gain: number): { title: "Gain" | "Loss" | "No gain"; label: string } {
+  const shown = tenth(gain);
+  if (shown > 0) return { title: "Gain", label: `Gain of ${formatTenths(shown)}` };
+  if (shown < 0) return { title: "Loss", label: `Loss of ${formatTenths(Math.abs(shown))}` };
+  return { title: "No gain", label: "No gain" };
+}
+
+/** Offense scores at the north goal. A defensive ball carrier scores at the south goal. */
+function touchdownSide(carrier: Player | undefined, yard: number): "off" | "def" | null {
+  if (carrier?.team === "def") return yard <= 0 ? "def" : null;
+  return yard >= FIELD.length ? "off" : null;
+}
+
+/** Offense downed south of its goal line, or flagged from a body touch in that end zone. */
+function isSafety(carrier: Player | undefined, forced: boolean): boolean {
+  if (carrier?.team !== "off") return false;
+  return forced || carrier.yard < 0;
+}
+
+/**
+ * Add this snap to the box score.
+ * A touchdown is not a first down. A defensive score does not add offensive yards.
+ */
+function tallySnap(gain: number, runnerYard: number, score: "off" | "def" | null, firstDown: boolean) {
+  const start = consumeFirstContact();
+  const offensive = score !== "def";
+  const yacDelta = offensive && start != null ? tenth(runnerYard - start) : 0;
+  return {
+    youScore: board.youScore + (score === "off" ? OFFENSE_TOUCHDOWN_POINTS : 0),
+    cpuScore: board.cpuScore + (score === "def" ? DEFENSE_TOUCHDOWN_POINTS : 0),
+    totalYards: tenth(board.totalYards + (offensive ? gain : 0)),
+    firstDowns: board.firstDowns + (firstDown && score == null ? 1 : 0),
+    touchdowns: board.touchdowns + (score === "off" ? 1 : 0),
+    yac: tenth(board.yac + yacDelta),
+  };
+}
+
+/** Practice keeps the result line. It does not move the series or the next spot. */
+function settlePracticePlay(
+  carrier: Player | undefined,
+  yard: number,
+  los: number,
+  measure: number,
+  ballSpot: boolean,
+  safety: boolean,
+) {
+  const kind = touchdownSide(carrier, yard);
+  if (kind) {
+    const gained = Math.max(0, yard - los);
     board = {
       ...board,
-      score: board.score + 100,
+      ...tallySnap(gained, yard, kind, false),
       over: true,
       title: "Touchdown",
-      detail: `${gained} yards · +100`,
+      detail: kind === "off" ? `${formatTenths(tenth(gained))} yards` : "Touchdown",
     };
-    console.log(`Touchdown. ${gained} yards. Score ${board.score}.`);
+    console.log(`Touchdown. ${board.detail}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
     publish();
     return null;
   }
-  const yards = clamp(Math.round(measure - los), -20, 100);
-  let points = 0;
-  if (yards > 0) points += yards;
-  if (yards >= 10) points += 10;
-  if (yards < 0) points -= 2;
-  const score = Math.max(0, board.score + points);
-  const title = ballSpot ? "Out of bounds" : yards > 0 ? "Gain" : yards < 0 ? "Loss" : "No gain";
-  const yardsLabel = yards > 0 ? `Gain of ${yards}` : yards < 0 ? `Loss of ${Math.abs(yards)}` : "No gain";
-  const pointsLabel = points > 0 ? `+${points}` : points < 0 ? `${points}` : "0";
-  board = { ...board, score, over: true, title, detail: `${yardsLabel} · ${pointsLabel}` };
-  console.log(`${board.detail}. Score ${board.score}.`);
+  if (isSafety(carrier, safety)) {
+    const stats = tallySnap(yard - los, yard, null, false);
+    board = {
+      ...board,
+      ...stats,
+      cpuScore: stats.cpuScore + SAFETY_POINTS,
+      over: true,
+      title: "Safety",
+      detail: "2 points",
+    };
+    console.log(`Safety. 2 points. YOU ${board.youScore} CPU ${board.cpuScore}.`);
+    publish();
+    return null;
+  }
+  const gain = measure - los;
+  const said = gainLabel(gain);
+  const title = ballSpot ? "Out of bounds" : said.title;
+  board = { ...board, ...tallySnap(gain, yard, null, false), over: true, title, detail: said.label };
+  console.log(`${board.detail}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
   publish();
   return null;
 }
 
 /**
- * Yards from the LOS, points, and the next line of scrimmage.
- * A carrier at yard 100 scores. Otherwise the next spot is the downed ball.
+ * Yards from the LOS and the next line of scrimmage.
+ * An offensive carrier at yard 100 scores 7. A defensive carrier at yard 0 scores 8.
+ * Otherwise the next spot is the downed ball.
  * `tip` is the furthest-downfield point of the football at the whistle.
- * That yard is not rounded. Points still use the rounded gain.
- * An out-of-bounds whistle keeps the tip's X. An in-bounds tip is hash-clamped.
- * A touchdown is 100 and does not also add the yards.
+ * That yard is not rounded. The result line uses the same tenths as the chains.
+ * An out-of-bounds whistle spots X on the near side of the nearest hash mark.
+ * An in-bounds tip is hash-clamped. A touchdown does not also count as a first down.
  */
-export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint): { los: number; ballX: number } | null {
+export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety = false): { los: number; ballX: number } | null {
   const carrier = sim.players.find((player) => player.controlled);
   const los = sim.los;
   const yard = carrier?.yard ?? los;
   const spotX = ballSpot ? sim.ballX : (carrier?.x ?? FIELD.width * 0.5);
   const measure = ballSpot ? sim.ballYard : yard;
-  if (sessionMode === "practice") return settlePracticePlay(yard, los, measure, ballSpot);
-  if (yard >= FIELD.length) {
-    const gained = Math.max(0, Math.round(yard - los));
+  if (sessionMode === "practice") return settlePracticePlay(carrier, yard, los, measure, ballSpot, safety);
+  advanceQuarter();
+  const kind = touchdownSide(carrier, yard);
+  if (kind) {
+    const gained = Math.max(0, yard - los);
     board = {
       ...board,
-      score: board.score + 100,
+      ...tallySnap(gained, yard, kind, false),
       over: true,
       title: "Touchdown",
-      detail: `${gained} yards · +100`,
+      detail: kind === "off" ? `${formatTenths(tenth(gained))} yards` : "Touchdown",
     };
     const nextLos = touchdownSpot();
     down = 1;
     toGo = freshToGo(nextLos);
     seriesOver = false;
     pendingSpot = { los: nextLos, ballX: FIELD.width * 0.5 };
-    board = { ...board, downText: formatDown(down, toGo, nextLos), seriesOver: false };
-    console.log(`Touchdown. ${gained} yards. Score ${board.score}.`);
+    board = { ...board, downText: formatDown(down, toGo, nextLos), ballOn: nextLos, seriesOver: false };
+    placeEnteredQuarter();
+    console.log(`Touchdown. ${board.detail}. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
+    publish();
+    return pendingSpot;
+  }
+  if (isSafety(carrier, safety) && carrier) {
+    const nextLos = SAFETY_SPOT_YARD;
+    const gain = nextLos - los;
+    const stats = tallySnap(gain, yard, null, false);
+    const spotBallX = ballSpot ? hashNearSide(tip?.x ?? spotX) : hashSnapX(tip?.x ?? spotX, false);
+    down = 1;
+    toGo = freshToGo(nextLos);
+    seriesOver = false;
+    pendingSpot = { los: nextLos, ballX: spotBallX, exact: true };
+    board = {
+      ...board,
+      ...stats,
+      cpuScore: stats.cpuScore + SAFETY_POINTS,
+      over: true,
+      title: "Safety",
+      detail: "2 points",
+      ballOn: nextLos,
+      seriesOver: false,
+      downText: formatDown(down, toGo, nextLos),
+      clock: clockLeft,
+    };
+    placeEnteredQuarter();
+    console.log(`Safety. 2 points. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
     publish();
     return pendingSpot;
   }
@@ -581,29 +797,26 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint): { los: 
   const tipYard = tip?.yard ?? measure;
   const nextLos = clamp(tipYard, SPOT_YARD_MIN, SPOT_YARD_MAX);
   const exactGain = nextLos - los;
-  const yards = clamp(Math.round(exactGain), -20, 100);
-  let points = 0;
-  if (yards > 0) points += yards;
-  if (yards >= 10) points += 10;
-  if (yards < 0) points -= 2;
-  const score = Math.max(0, board.score + points);
-  const title = ballSpot ? "Out of bounds" : yards > 0 ? "Gain" : yards < 0 ? "Loss" : "No gain";
-  const yardsLabel = yards > 0 ? `Gain of ${yards}` : yards < 0 ? `Loss of ${Math.abs(yards)}` : "No gain";
-  const pointsLabel = points > 0 ? `+${points}` : points < 0 ? `${points}` : "0";
+  const said = gainLabel(exactGain);
+  const title = ballSpot ? "Out of bounds" : said.title;
   board = {
     ...board,
-    score,
+    ...tallySnap(exactGain, yard, null, false),
     over: true,
     title,
-    detail: `${yardsLabel} · ${pointsLabel}`,
+    detail: said.label,
+    ballOn: nextLos,
   };
   const madeFirst = exactGain >= toGo - 1e-3;
-  const spotBallX = ballSpot ? tipX : hashSnapX(tipX, tipX <= 0.2 || tipX >= FIELD.width - 0.2);
+  // Out of bounds: the near end of the nearest hash tick, never the sideline.
+  // In bounds: stay between the hashes, unless the tip is already on a sideline.
+  const spotBallX = ballSpot ? hashNearSide(tipX) : hashSnapX(tipX, tipX <= 0.2 || tipX >= FIELD.width - 0.2);
   if (madeFirst) {
     down = 1;
     toGo = freshToGo(nextLos);
     seriesOver = false;
     pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
+    board = { ...board, firstDowns: board.firstDowns + 1 };
   } else {
     down += 1;
     if (down > 4) {
@@ -622,15 +835,16 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint): { los: 
   if (!seriesOver) {
     board = { ...board, seriesOver: false, downText: formatDown(down, toGo, nextLos) };
   }
-  console.log(`${board.detail}. ${board.downText}. Score ${board.score}.`);
+  placeEnteredQuarter();
+  console.log(`${board.detail}. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
   publish();
   return pendingSpot;
 }
 
-/** `ballSpot` is an out-of-bounds whistle. `tip` is the ball's downfield point. */
-export function markPlayOver(sim: Sim, ballSpot = false, tip?: BallPoint) {
+/** `ballSpot` is an out-of-bounds whistle. `tip` is the ball's downfield point. `safety` is an own-end-zone touch. */
+export function markPlayOver(sim: Sim, ballSpot = false, tip?: BallPoint, safety = false) {
   if (board.over) return;
-  settlePlay(sim, ballSpot, tip);
+  settlePlay(sim, ballSpot, tip, safety);
 }
 
 /**
@@ -638,6 +852,7 @@ export function markPlayOver(sim: Sim, ballSpot = false, tip?: BallPoint) {
  * The carrier clocks come from `createPlaySim`. The looked bodies replace its roster.
  */
 export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPlay } {
+  resetFirstContact();
   // Steppers apply here, so the live roster waits until the next snap.
   // A caller can still override one group.
   const lined: PlacementCall = { ...call, personnel: { ...readPersonnel(), ...(call.personnel ?? {}) } };
@@ -668,7 +883,9 @@ export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPl
     schemeName: assigned.scheme.name,
     replay: false,
     clock: clockLeft,
+    quarter,
     downText: board.downText,
+    ballOn: sim.los,
     seriesOver,
     paused: false,
     awaitSnap: true,
@@ -689,23 +906,34 @@ export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
   playIndex = 0;
   schemeIndex = 0;
   pendingSpot = null;
+  resetFirstContact();
   board = {
-    score: 0,
+    youScore: 0,
+    cpuScore: 0,
+    totalYards: 0,
+    firstDowns: 0,
+    touchdowns: 0,
+    yac: 0,
     over: false,
     title: "",
     detail: "",
     playName: BOOT_PLAY.play.name,
     schemeName: BOOT_PLAY.scheme.name,
     replay: false,
-    clock: GAME_CLOCK_SECONDS,
+    clock: QUARTER_SECONDS,
+    quarter: 1,
     downText: "1st & 10",
+    ballOn: BOOT_PLAY.los,
+    homePossession: true,
     seriesOver: false,
     profile: "wings",
     paused: false,
     awaitSnap: true,
     mode: sessionMode,
   };
-  clockLeft = GAME_CLOCK_SECONDS;
+  clockLeft = QUARTER_SECONDS;
+  quarter = 1;
+  enteredQuarter = null;
   down = 1;
   toGo = 10;
   seriesOver = false;

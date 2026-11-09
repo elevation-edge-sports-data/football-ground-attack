@@ -1,7 +1,9 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
+import { formatQuarter, readBoard, subscribeBoard } from "./sim/boot";
 import {
   UNIFORMS,
   getUniformSelection,
+  kitById,
   kitName,
   selectDefenseKit,
   selectOffenseKit,
@@ -9,14 +11,27 @@ import {
   type Uniform,
 } from "./uniforms";
 
-function Swatch({ kit, selected, onSelect }: { kit: Uniform; selected: boolean; onSelect: () => void }) {
+function Swatch({
+  kit,
+  selected,
+  onSelect,
+  locked = false,
+}: {
+  kit: Uniform;
+  selected: boolean;
+  onSelect?: () => void;
+  locked?: boolean;
+}) {
   return (
     <button
       type="button"
-      role="option"
-      aria-selected={selected}
-      aria-label={kitName(kit)}
-      onClick={onSelect}
+      role={locked ? undefined : "option"}
+      aria-selected={locked ? undefined : selected}
+      aria-hidden={locked ? true : undefined}
+      tabIndex={locked ? -1 : undefined}
+      aria-label={locked ? undefined : kitName(kit)}
+      onMouseDown={locked ? (event) => event.preventDefault() : undefined}
+      onClick={locked ? undefined : onSelect}
       style={{
         width: 28,
         height: 32,
@@ -76,6 +91,37 @@ const inlineBanner: CSSProperties = {
   background: "rgba(22, 28, 24, 0.94)",
   flex: "0 0 auto",
 };
+
+/** Selected kits with the score between them, plus the live quarter. */
+export function TeamScore() {
+  const selection = useSyncExternalStore(subscribeUniforms, getUniformSelection);
+  const board = useSyncExternalStore(subscribeBoard, readBoard);
+  const you = kitById(selection.offId);
+  const cpu = kitById(selection.defId);
+  return (
+    <div
+      aria-label="Team score"
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 8,
+        marginTop: 6,
+      }}
+    >
+      <Swatch kit={you} selected locked />
+      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+        <span style={{ fontSize: 26, fontWeight: 700 }}>{board.youScore}</span>
+        <span style={{ fontSize: 16, letterSpacing: "0.08em" }}>YOU - CPU</span>
+        <span style={{ fontSize: 26, fontWeight: 700 }}>{board.cpuScore}</span>
+      </span>
+      <Swatch kit={cpu} selected locked />
+      <span aria-label="Quarter" style={{ fontSize: 22, marginLeft: 4, whiteSpace: "nowrap" }}>
+        {`QTR ${formatQuarter(board.quarter)}`}
+      </span>
+    </div>
+  );
+}
 
 export function UniformBanner({ inline = false, single = false }: { inline?: boolean; single?: boolean }) {
   const selection = useSyncExternalStore(subscribeUniforms, getUniformSelection);

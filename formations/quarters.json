@@ -1,0 +1,510 @@
+{
+  "frame": 0,
+  "time": 0,
+  "userId": 0,
+  "controlledId": "hb-0",
+  "original": {
+    "ball": {
+      "x": 37.9,
+      "yard": 45.22,
+      "y": 0.95,
+      "owner": "hb-0"
+    },
+    "players": [
+      {
+        "index": 0,
+        "id": "hb-0",
+        "x": 37.5,
+        "yard": 45,
+        "yaw": 0,
+        "side": "off",
+        "role": "HB",
+        "number": 28,
+        "pose": "carry 1"
+      },
+      {
+        "index": 1,
+        "id": "ol-0",
+        "x": 33.1,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 60,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 2,
+        "id": "ol-1",
+        "x": 35.3,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 61,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 3,
+        "id": "ol-2",
+        "x": 37.5,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 63,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 4,
+        "id": "ol-3",
+        "x": 39.7,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 65,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 5,
+        "id": "ol-4",
+        "x": 41.9,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 70,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 6,
+        "id": "te-0",
+        "x": 30.2,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 80,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 7,
+        "id": "te-1",
+        "x": 44.8,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 81,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 8,
+        "id": "te-2",
+        "x": 27.6,
+        "yard": 49.4,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 84,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 9,
+        "id": "qb-0",
+        "x": 37.15,
+        "yard": 48.9,
+        "yaw": 0,
+        "side": "off",
+        "role": "QB",
+        "number": 12,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 10,
+        "id": "fb-0",
+        "x": 37.5,
+        "yard": 47.1,
+        "yaw": 0,
+        "side": "off",
+        "role": "FB",
+        "number": 44,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 11,
+        "id": "dt-0",
+        "x": 34.2,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 90,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 12,
+        "id": "dt-1",
+        "x": 37.5,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 92,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 13,
+        "id": "dt-2",
+        "x": 40.8,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 95,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 14,
+        "id": "lb-0",
+        "x": 33.5,
+        "yard": 55.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "LB",
+        "number": 54,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 15,
+        "id": "lb-1",
+        "x": 41.5,
+        "yard": 55.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "LB",
+        "number": 55,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 16,
+        "id": "db-0",
+        "x": 10,
+        "yard": 52.4,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 20,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 17,
+        "id": "db-1",
+        "x": 28,
+        "yard": 53.2,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 21,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 18,
+        "id": "db-2",
+        "x": 47,
+        "yard": 54.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 24,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 19,
+        "id": "db-3",
+        "x": 65,
+        "yard": 52.4,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 26,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 20,
+        "id": "db-4",
+        "x": 34,
+        "yard": 59,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 31,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 21,
+        "id": "db-5",
+        "x": 41,
+        "yard": 63,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 32,
+        "pose": "2 point stance"
+      }
+    ]
+  },
+  "adjusted": {
+    "ball": {
+      "x": 37.9,
+      "yard": 45.22,
+      "y": 0.95,
+      "owner": "hb-0"
+    },
+    "players": [
+      {
+        "index": 0,
+        "id": "hb-0",
+        "x": 37.5,
+        "yard": 45,
+        "yaw": 0,
+        "side": "off",
+        "role": "HB",
+        "number": 28,
+        "pose": "carry 1"
+      },
+      {
+        "index": 1,
+        "id": "ol-0",
+        "x": 33.1,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 60,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 2,
+        "id": "ol-1",
+        "x": 35.3,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 61,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 3,
+        "id": "ol-2",
+        "x": 37.5,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 63,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 4,
+        "id": "ol-3",
+        "x": 39.7,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 65,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 5,
+        "id": "ol-4",
+        "x": 41.9,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "OL",
+        "number": 70,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 6,
+        "id": "te-0",
+        "x": 30.2,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 80,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 7,
+        "id": "te-1",
+        "x": 44.8,
+        "yard": 49.5,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 81,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 8,
+        "id": "te-2",
+        "x": 27.6,
+        "yard": 49.4,
+        "yaw": 0,
+        "side": "off",
+        "role": "TE",
+        "number": 84,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 9,
+        "id": "qb-0",
+        "x": 37.15,
+        "yard": 48.9,
+        "yaw": 0,
+        "side": "off",
+        "role": "QB",
+        "number": 12,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 10,
+        "id": "fb-0",
+        "x": 37.5,
+        "yard": 47.1,
+        "yaw": 0,
+        "side": "off",
+        "role": "FB",
+        "number": 44,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 11,
+        "id": "dt-0",
+        "x": 34.2,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 90,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 12,
+        "id": "dt-1",
+        "x": 37.5,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 92,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 13,
+        "id": "dt-2",
+        "x": 40.8,
+        "yard": 51.3,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DT",
+        "number": 95,
+        "pose": "3 point stance"
+      },
+      {
+        "index": 14,
+        "id": "lb-0",
+        "x": 33.5,
+        "yard": 55.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "LB",
+        "number": 54,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 15,
+        "id": "lb-1",
+        "x": 41.5,
+        "yard": 55.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "LB",
+        "number": 55,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 16,
+        "id": "db-0",
+        "x": 10,
+        "yard": 52.4,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 20,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 17,
+        "id": "db-1",
+        "x": 28,
+        "yard": 53.2,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 21,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 18,
+        "id": "db-2",
+        "x": 47,
+        "yard": 54.5,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 24,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 19,
+        "id": "db-3",
+        "x": 65,
+        "yard": 52.4,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 26,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 20,
+        "id": "db-4",
+        "x": 34,
+        "yard": 59,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 31,
+        "pose": "2 point stance"
+      },
+      {
+        "index": 21,
+        "id": "db-5",
+        "x": 41,
+        "yard": 63,
+        "yaw": 3.141592653589793,
+        "side": "def",
+        "role": "DB",
+        "number": 32,
+        "pose": "2 point stance"
+      }
+    ]
+  }
+}

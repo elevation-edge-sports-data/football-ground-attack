@@ -1,11 +1,7 @@
 import type { CSSProperties } from "react";
 import { setSessionMode, type SessionMode } from "./sim/boot";
 
-const dock: CSSProperties = {
-  position: "absolute",
-  left: 16,
-  bottom: 16,
-  zIndex: 6,
+const group: CSSProperties = {
   display: "flex",
   gap: 2,
   padding: 2,
@@ -14,6 +10,14 @@ const dock: CSSProperties = {
   background: "rgba(22, 28, 24, 0.94)",
   pointerEvents: "auto",
   userSelect: "none",
+};
+
+const dock: CSSProperties = {
+  ...group,
+  position: "absolute",
+  left: 16,
+  bottom: 16,
+  zIndex: 6,
 };
 
 function optionStyle(on: boolean): CSSProperties {
@@ -33,10 +37,10 @@ function optionStyle(on: boolean): CSSProperties {
   };
 }
 
-/** Bottom-left Game | Practice switch. The selected side is orange and outlined. */
-export function ModeToggle({ mode }: { mode: SessionMode }) {
+/** Game | Practice. `embedded` sits in the bottom button row. */
+export function ModeToggle({ mode, embedded = false }: { mode: SessionMode; embedded?: boolean }) {
   return (
-    <div role="group" aria-label="Mode" style={dock}>
+    <div role="group" aria-label="Mode" style={embedded ? group : dock}>
       <ModeButton mode="game" current={mode} label="Game" />
       <ModeButton mode="practice" current={mode} label="Practice" />
     </div>

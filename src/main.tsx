@@ -7,19 +7,45 @@ import { CameraRig } from "./field/OrbitCamera";
 import { FIELD } from "./field/spec";
 import { setFollowTarget } from "./game/cameraFollow";
 import { worldFromField } from "./game/frame";
+import { FormationLibraryView } from "./game/FormationLibraryView";
+import { ReplayViewerView } from "./game/ReplayViewerView";
 import { PoseEditor } from "./game/PoseEditor";
-import { ModeToggle } from "./game/ModeToggle";
 import { PersonnelHud } from "./game/PersonnelHud";
 import { PracticeBooks } from "./game/PracticeBooks";
-import { UniformBanner } from "./game/UniformBanner";
-import { CameraMenu } from "./game/CameraMenu";
+import { TeamScore, UniformBanner } from "./game/UniformBanner";
+import { BottomMenus } from "./game/BottomMenus";
+import { FormationEdit } from "./game/FormationEdit";
+import { PauseTapeControls, TapeBar } from "./game/TapeBar";
 import { SimView } from "./game/SimView";
-import { askNextPlay, askReplay, askRestart, bootCamera, formatClock, previewRequested, readBoard, subscribeBoard } from "./game/sim/boot";
+import { askRestart, bootCamera, formatBallOn, formatClock, formatTenths, previewRequested, readBoard, subscribeBoard } from "./game/sim/boot";
 import { replaySnapFollow } from "./game/replayCamera";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Missing #root");
+}
+
+function BallOnReadout({ yard, home, tail }: { yard: number; home: boolean; tail: string }) {
+  const arm = "5px solid transparent";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span>BALL ON</span>
+      <span
+        role="img"
+        aria-label={home ? "Home possession" : "Away possession"}
+        style={{
+          width: 0,
+          height: 0,
+          borderLeft: arm,
+          borderRight: arm,
+          ...(home
+            ? { borderBottom: "8px solid currentColor" }
+            : { borderTop: "8px solid currentColor" }),
+        }}
+      />
+      <span>{`${formatBallOn(yard)}· ${tail}`}</span>
+    </span>
+  );
 }
 
 const opening = bootCamera();
@@ -31,6 +57,18 @@ setFollowTarget(lookTarget[0], lookTarget[1], lookTarget[2]);
 /** South of that player, elevated, so the default view looks north. */
 const eye = worldFromField(leadX, leadYard - 16, 18);
 
+function replayViewerRequested(): boolean {
+  // docs/replay-viewer.html sets this so the static page opens the viewer with no query string.
+  if (document.documentElement.hasAttribute("data-replay-viewer")) return true;
+  return new URLSearchParams(window.location.search).has("replay-viewer");
+}
+
+function formationLibraryRequested(): boolean {
+  // docs/formation-library.html sets this so the static page opens the library with no query string.
+  if (document.documentElement.hasAttribute("data-formation-library")) return true;
+  return new URLSearchParams(window.location.search).has("formation-library");
+}
+
 function poseEditorRequested(): boolean {
   // docs/pose-editor.html sets this so the static page opens the editor with no query string.
   if (document.documentElement.hasAttribute("data-pose-editor")) return true;
@@ -39,6 +77,8 @@ function poseEditorRequested(): boolean {
 
 function App() {
   const board = useSyncExternalStore(subscribeBoard, readBoard);
+  if (replayViewerRequested()) return <ReplayViewerView />;
+  if (formationLibraryRequested()) return <FormationLibraryView />;
   if (poseEditorRequested()) return <PoseEditor />;
   const practice = board.mode === "practice";
   const canContinue = practice || (board.clock > 0 && !board.seriesOver);
@@ -65,7 +105,6 @@ function App() {
       <UniformBanner />
       {!previewRequested() ? <PersonnelHud /> : null}
       {!previewRequested() ? <PracticeBooks /> : null}
-      {!previewRequested() ? <ModeToggle mode={board.mode} /> : null}
       {!previewRequested() ? (
         <div
           style={{
@@ -80,37 +119,44 @@ function App() {
             fontSize: 22,
             letterSpacing: "0.04em",
             textAlign: "center",
-            pointerEvents: board.over ? "auto" : "none",
+            // The whole panel takes the pointer, same as the uniform banner and
+            // the personnel buttons. Wheel here is page zoom, not the scene.
+            pointerEvents: "auto",
           }}
         >
-          <div>
-            {practice
-              ? `OFF · Score ${board.score}`
-              : `${board.downText} · ${formatClock(board.clock)} · Score ${board.score}`}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+            <span>{board.downText}</span>
+            <BallOnReadout
+              yard={board.ballOn}
+              home={board.homePossession}
+              tail={practice ? "OFF" : formatClock(board.clock)}
+            />
           </div>
-          {!practice && board.over && board.clock <= 0 ? <div style={{ fontSize: 28, marginTop: 4 }}>Time expired</div> : null}
-          {board.paused && !board.over ? (
+          <TeamScore />
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 22, marginTop: 8 }}>
+            <div aria-label="Game stats" style={{ textAlign: "left", fontSize: 15, letterSpacing: "0.06em", lineHeight: 1.35, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+              <div>{`TOTAL YARDS ${formatTenths(board.totalYards)}`}</div>
+              <div>{`FIRST DOWNS ${board.firstDowns}`}</div>
+              <div>{`TOUCHDOWNS ${board.touchdowns}`}</div>
+              <div>{`YAC ${formatTenths(board.yac)}`}</div>
+            </div>
+            <div style={{ textAlign: "center", flex: "1 1 auto" }}>
+          {!practice && board.over && !board.paused && board.clock <= 0 ? <div style={{ fontSize: 28, marginTop: 4 }}>Time expired</div> : null}
+          {board.paused ? (
             <>
               <div style={{ fontSize: 28, marginTop: 4 }}>Paused</div>
-              <div style={{ fontSize: 14, opacity: 0.75 }}>Esc or right-stick click resumes</div>
-              <CameraMenu />
-              <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4, pointerEvents: "none" }}>
-                Freestyle: drag · scroll zoom · right-drag pan · [ ] yaw · PgUp/PgDn zoom. Wings right stick looks. Paused sticks orbit.
-              </div>
+              <PauseTapeControls />
             </>
           ) : null}
           <div style={{ fontSize: 16, opacity: 0.8 }}>
-            {board.playName} vs {board.schemeName} · {board.profile === "classic" ? "Classic" : board.profile === "independent" ? "Independent" : "Wings"}
+            {board.playName} vs {board.schemeName}
           </div>
-          {!board.over && board.awaitSnap ? (
-            <div style={{ fontSize: 16, opacity: 0.85 }}>Enter or A to snap</div>
-          ) : null}
           {!board.over && board.profile !== "wings" ? (
             <div style={{ fontSize: 14, opacity: 0.75 }}>
               {board.profile === "classic" ? "Blocker: U B K O · Stiff: Tab \\" : "Blocker: U B K O"}
             </div>
           ) : null}
-          {board.over ? (
+          {board.over && !board.paused ? (
             <>
               <div style={{ fontSize: 28, marginTop: 4 }}>{board.title}</div>
               <div style={{ fontSize: 16 }}>{board.detail}</div>
@@ -134,43 +180,7 @@ function App() {
                   Follow
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={askReplay}
-                style={{
-                  marginTop: 8,
-                  marginRight: 8,
-                  fontFamily: "inherit",
-                  fontSize: 18,
-                  letterSpacing: "0.06em",
-                  background: board.replay ? "#1f2937" : "#e5e7eb",
-                  color: board.replay ? "#f4f7fb" : "#111827",
-                  border: 0,
-                  padding: "6px 14px",
-                  cursor: "pointer",
-                }}
-              >
-                {board.replay ? "Exit replay" : "Replay"}
-              </button>
-              {canContinue ? (
-              <button
-                type="button"
-                onClick={askNextPlay}
-                style={{
-                  marginTop: 8,
-                  fontFamily: "inherit",
-                  fontSize: 18,
-                  letterSpacing: "0.06em",
-                  background: "#3b82f6",
-                  color: "#fff",
-                  border: 0,
-                  padding: "6px 14px",
-                  cursor: "pointer",
-                }}
-              >
-                Next play
-              </button>
-              ) : (
+              {!canContinue ? (
               <button
                 type="button"
                 onClick={askRestart}
@@ -188,20 +198,22 @@ function App() {
               >
                 New game
               </button>
-              )}
+              ) : null}
+              {board.replay ? (
               <div style={{ fontSize: 14, opacity: 0.75, marginTop: 4 }}>
-                {!canContinue
-                  ? board.replay
-                    ? "A new game · Left/Right scrub · 1 2 3 speed · Q/E orbit · PgUp/PgDn zoom · 0 toggles follow · R exits"
-                    : "A new game · R replay"
-                  : board.replay
-                    ? "Left/Right scrub · 1 2 3 speed · Q/E orbit · PgUp/PgDn zoom · 0 toggles follow · R exits"
-                    : "A, Enter, or N · R replay"}
+                {!canContinue ? "A new game · " : ""}
+                Left/Right scrub · 1 2 3 speed · Q/E orbit · PgUp/PgDn zoom · 0 toggles follow · R exits
               </div>
+              ) : null}
             </>
           ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
+      {!previewRequested() ? <FormationEdit /> : null}
+      {!previewRequested() ? <TapeBar /> : null}
+      {!previewRequested() ? <BottomMenus /> : null}
     </div>
   );
 }

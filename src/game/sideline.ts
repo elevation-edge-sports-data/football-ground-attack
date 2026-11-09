@@ -1,5 +1,5 @@
 import { Vector3, type Mesh, type Object3D } from "three";
-import { FIELD } from "../field/spec";
+import { FIELD, SOUTH_BACK } from "../field/spec";
 
 /**
  * A body corner at or below this height is on the ground.
@@ -18,16 +18,26 @@ function namedAncestor(obj: Object3D, name: string) {
   return false;
 }
 
+export type RunnerBounds = {
+  /** Grounded body on or outside a white sideline. */
+  sideline: boolean;
+  /** Grounded body on or past the back of the offense's end zone. */
+  ownBack: boolean;
+  /** Sideline contact beside the offense's end zone, not past the end line. */
+  ownEndSideline: boolean;
+};
+
 /**
- * True when a corner of the runner's body is touching the ground on or
- * outside a white sideline. The apron past x = 0 and x = width is out.
- * The line itself is out. The ball and the ground ring are not the body.
+ * Sideline and own-end-line touches for the controlled runner.
+ * A corner at or below ground height counts. The line itself is out.
+ * The ball and the ground ring are not the body. World Z is −yard, so the
+ * south end line (the back of the offense's end zone) is yard `SOUTH_BACK`.
  */
-export function runnerTouchesSideline(root: Object3D, width = FIELD.width): boolean {
+export function runnerBounds(root: Object3D, width = FIELD.width): RunnerBounds {
   root.updateWorldMatrix(true, true);
-  let out = false;
+  const bounds: RunnerBounds = { sideline: false, ownBack: false, ownEndSideline: false };
   root.traverse((obj) => {
-    if (out) return;
+    if (bounds.sideline && bounds.ownBack && bounds.ownEndSideline) return;
     const mesh = obj as Mesh;
     if (!mesh.isMesh || !mesh.geometry) return;
     if (mesh.name === "player-ring" || namedAncestor(mesh, "football")) return;
@@ -39,13 +49,21 @@ export function runnerTouchesSideline(root: Object3D, width = FIELD.width): bool
         for (const z of [box.min.z, box.max.z]) {
           _point.set(x, y, z).applyMatrix4(mesh.matrixWorld);
           if (_point.y > GROUND_CONTACT_Y) continue;
+          const yard = -_point.z;
           if (_point.x <= 0 || _point.x >= width) {
-            out = true;
-            return;
+            bounds.sideline = true;
+            if (yard < 0 && yard > SOUTH_BACK) bounds.ownEndSideline = true;
           }
+          if (yard <= SOUTH_BACK) bounds.ownBack = true;
+          if (bounds.sideline && bounds.ownBack && bounds.ownEndSideline) return;
         }
       }
     }
   });
-  return out;
+  return bounds;
+}
+
+/** True when a grounded body corner is on or outside a white sideline. */
+export function runnerTouchesSideline(root: Object3D, width = FIELD.width): boolean {
+  return runnerBounds(root, width).sideline;
 }

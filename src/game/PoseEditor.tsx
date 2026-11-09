@@ -21,7 +21,7 @@ import { UniformBanner } from "./UniformBanner";
 import { kitById, PLAYER_NUMBERS, getUniformSelection, subscribeUniforms } from "./uniforms";
 
 const POSE_ID = "carry 1";
-const POSES = [
+export const POSES = [
   POSE_ID,
   "carry 2",
   "sprint 1",
@@ -56,7 +56,7 @@ const POSES = [
 ] as const;
 type PoseId = (typeof POSES)[number];
 
-function poseCarriesBall(pose: PoseId): boolean {
+export function poseCarriesBall(pose: string): boolean {
   return (
     pose !== "2 point stance" &&
     pose !== "3 point stance" &&

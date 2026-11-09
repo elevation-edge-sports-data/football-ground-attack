@@ -49,7 +49,7 @@ export type PlacementCall = {
   los: number | YardCall;
   /** Ball X before the hash rule. Defaults to the middle of the field. */
   ballX?: number;
-  /** Keep ballX as the snap. An out-of-bounds whistle spots the ball where it was. */
+  /** Keep ballX as the snap. Practice re-spots and a hash-corrected out-of-bounds spot use this. */
   exactSnap?: boolean;
   /** Out of bounds spots on the hash toward the sideline the ball crossed. */
   oob?: boolean;

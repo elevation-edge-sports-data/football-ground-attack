@@ -61,6 +61,25 @@ export function hashRight(width = FIELD.width) {
   return width * 0.5 + hashHalf(width);
 }
 
+/**
+ * How far a hash tick sticks out from the hash toward the nearer sideline.
+ * The field paint uses the same reach.
+ */
+export function hashReach(width = FIELD.width) {
+  return hashHalf(width) * 0.16;
+}
+
+/**
+ * Sideline end of the hash mark nearest to `x`.
+ * An out-of-bounds spot uses this X. It sits on the hash, not on a sideline.
+ */
+export function hashNearSide(x: number, width = FIELD.width) {
+  const reach = hashReach(width);
+  const spot = !Number.isFinite(x) || x <= width * 0.5 ? hashLeft(width) - reach : hashRight(width) + reach;
+  if (!(width > 0)) return spot;
+  return clamp(spot, Math.min(reach, width * 0.5), Math.max(width - reach, width * 0.5));
+}
+
 export function yardLabel(yard: number) {
   if (yard === 0 || yard === FIELD.length) return "G";
   return String(yard > FIELD.length * 0.5 ? FIELD.length - yard : yard);
