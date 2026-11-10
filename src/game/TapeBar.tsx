@@ -141,7 +141,7 @@ export function PauseTapeControls() {
     return (
       <>
         <div style={{ fontSize: 14, opacity: 0.75 }}>
-          {playing ? "Playing" : "Paused"} · R, Select, or Esc returns here
+          {playing ? "Playing" : "Paused"} · R, Select, Esc, or right-stick click returns here
         </div>
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 8, pointerEvents: "auto" }}>
           <button type="button" onClick={stopTape} style={buttonStyle(false)}>
@@ -149,7 +149,7 @@ export function PauseTapeControls() {
           </button>
         </div>
         <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4, pointerEvents: "none" }}>
-          A/Space play · X/B zoom · WASD or stick pan · hold Y and steer to orbit · arrows or LB/RB slow · G/Shift or LT/RT fast · Lock freezes the frame
+          A/Space play · X/B zoom · WASD pan · right stick orbits · arrows or left stick move the X · Y next player or the ball · LB/RB slow · G/Shift or LT/RT fast · Lock freezes the frame
         </div>
       </>
     );

@@ -25,6 +25,7 @@ import {
   buildDiamondEdges,
   buildDiamondGeometry,
   buildMarkings,
+  buildMountainBackdrop,
   buildMountainGeometry,
   buildSurfacePattern,
   buildTurfGeometry,
@@ -301,25 +302,40 @@ function SurfaceGrain({ surface, ezArt }: { surface: SurfaceId; ezArt: EzArtId }
   );
 }
 
-/** One flat color across each end zone. Solid is opaque. Mountains wash the primary at v10's 0.86. */
-function EndZoneWash({ color, opacity }: { color: string; opacity: number }) {
-  const solid = opacity >= 1;
+/**
+ * Kit color with no turf blend and no extra ground light.
+ * Flat end zones were blowing the hex out and looking pale next to the jerseys.
+ */
+function EzArtFill({
+  color,
+  vertexColors,
+  factor,
+  units,
+}: {
+  color?: string;
+  vertexColors?: boolean;
+  factor: number;
+  units: number;
+}) {
+  return (
+    <meshBasicMaterial
+      color={vertexColors ? "#ffffff" : color}
+      vertexColors={!!vertexColors}
+      polygonOffset
+      polygonOffsetFactor={factor}
+      polygonOffsetUnits={units}
+    />
+  );
+}
+
+/** One flat color across each end zone. */
+function EndZoneWash({ color }: { color: string }) {
   return (
     <group>
       {[5, -105].map((z) => (
         <mesh key={z} position={[FIELD.width / 2, 0.012, z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
           <planeGeometry args={[FIELD.width, FIELD.endZone]} />
-          <meshStandardMaterial
-            color={color}
-            transparent={!solid}
-            opacity={opacity}
-            roughness={0.95}
-            metalness={0}
-            depthWrite={solid}
-            polygonOffset
-            polygonOffsetFactor={-2}
-            polygonOffsetUnits={-2}
-          />
+          <EzArtFill color={color} factor={-2} units={-2} />
         </mesh>
       ))}
     </group>
@@ -357,47 +373,36 @@ function DiamondEndZones({ primary, secondary }: { primary: string; secondary: s
   return (
     <group renderOrder={2}>
       <mesh geometry={geometry}>
-        <meshStandardMaterial
-          vertexColors
-          transparent
-          opacity={0.86}
-          roughness={0.95}
-          metalness={0}
-          depthWrite={false}
-          polygonOffset
-          polygonOffsetFactor={-2}
-          polygonOffsetUnits={-2}
-        />
+        <EzArtFill vertexColors factor={-2} units={-2} />
       </mesh>
       <primitive object={edges} />
     </group>
   );
 }
 
-function MountainEndZones({ color }: { color: string }) {
+function MountainEndZones({ primary, secondary }: { primary: string; secondary: string }) {
   const south = useMemo(() => buildMountainGeometry("south"), []);
   const north = useMemo(() => buildMountainGeometry("north"), []);
+  const southField = useMemo(() => buildMountainBackdrop("south"), []);
+  const northField = useMemo(() => buildMountainBackdrop("north"), []);
   useEffect(() => {
     return () => {
       south.dispose();
       north.dispose();
+      southField.dispose();
+      northField.dispose();
     };
-  }, [south, north]);
+  }, [south, north, southField, northField]);
   return (
     <group renderOrder={3}>
+      {[southField, northField].map((geometry, index) => (
+        <mesh key={`field-${index}`} geometry={geometry}>
+          <EzArtFill color={primary} factor={-2} units={-2} />
+        </mesh>
+      ))}
       {[south, north].map((geometry, index) => (
-        <mesh key={index} geometry={geometry}>
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={0.8}
-            roughness={0.95}
-            metalness={0}
-            depthWrite={false}
-            polygonOffset
-            polygonOffsetFactor={-3}
-            polygonOffsetUnits={-4}
-          />
+        <mesh key={`peak-${index}`} geometry={geometry}>
+          <EzArtFill color={secondary} factor={-3} units={-4} />
         </mesh>
       ))}
     </group>
@@ -412,15 +417,10 @@ function EndZones({ art, tone, kit }: { art: EzArtId; tone: EzTone; kit: Uniform
     // Kit 1's solid end zone uses orange as primary and blue as secondary.
     const solidPrimary = kit.id === 0 ? secondary : primary;
     const solidSecondary = kit.id === 0 ? primary : secondary;
-    return <EndZoneWash color={tone === "secondary" ? solidSecondary : solidPrimary} opacity={1} />;
+    return <EndZoneWash color={tone === "secondary" ? solidSecondary : solidPrimary} />;
   }
   if (art === "diamonds") return <DiamondEndZones primary={primary} secondary={secondary} />;
-  return (
-    <group>
-      <EndZoneWash color={primary} opacity={0.86} />
-      <MountainEndZones color={secondary} />
-    </group>
-  );
+  return <MountainEndZones primary={primary} secondary={secondary} />;
 }
 
 function MidfieldLogo({ kit, north }: { kit: Uniform; north: boolean }) {

@@ -15,6 +15,8 @@ import { PracticeBooks } from "./game/PracticeBooks";
 import { TeamScore, UniformBanner } from "./game/UniformBanner";
 import { BottomMenus } from "./game/BottomMenus";
 import { FormationEdit } from "./game/FormationEdit";
+import { ReplayScrubBar } from "./game/ReplayScrubBar";
+import { ReplayTransport } from "./game/ReplayTransport";
 import { PauseTapeControls, TapeBar } from "./game/TapeBar";
 import { SimView } from "./game/SimView";
 import { askRestart, bootCamera, formatBallOn, formatClock, formatTenths, previewRequested, readBoard, subscribeBoard } from "./game/sim/boot";
@@ -43,7 +45,7 @@ function BallOnReadout({ yard, home, tail }: { yard: number; home: boolean; tail
             : { borderTop: "8px solid currentColor" }),
         }}
       />
-      <span>{`${formatBallOn(yard)}· ${tail}`}</span>
+      <span>{tail ? `${formatBallOn(yard)}· ${tail}` : formatBallOn(yard)}</span>
     </span>
   );
 }
@@ -125,11 +127,11 @@ function App() {
           }}
         >
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-            <span>{board.downText}</span>
+            {practice ? null : <span>{board.downText}</span>}
             <BallOnReadout
               yard={board.ballOn}
               home={board.homePossession}
-              tail={practice ? "OFF" : formatClock(board.clock)}
+              tail={practice ? "" : formatClock(board.clock)}
             />
           </div>
           <TeamScore />
@@ -151,7 +153,7 @@ function App() {
           <div style={{ fontSize: 16, opacity: 0.8 }}>
             {board.playName} vs {board.schemeName}
           </div>
-          {!board.over && board.profile !== "wings" ? (
+          {!board.over && board.side !== "def" && board.profile !== "wings" ? (
             <div style={{ fontSize: 14, opacity: 0.75 }}>
               {board.profile === "classic" ? "Blocker: U B K O · Stiff: Tab \\" : "Blocker: U B K O"}
             </div>
@@ -202,7 +204,7 @@ function App() {
               {board.replay ? (
               <div style={{ fontSize: 14, opacity: 0.75, marginTop: 4 }}>
                 {!canContinue ? "A new game · " : ""}
-                Left/Right scrub · 1 2 3 speed · Q/E orbit · PgUp/PgDn zoom · 0 toggles follow · R exits
+                A play · LB/LT rewind · RB/RT forward · X/B zoom · Y next · RS orbit · arrows or left stick move the X · R or right-stick click exits
               </div>
               ) : null}
             </>
@@ -213,6 +215,8 @@ function App() {
       ) : null}
       {!previewRequested() ? <FormationEdit /> : null}
       {!previewRequested() ? <TapeBar /> : null}
+      {!previewRequested() ? <ReplayScrubBar /> : null}
+      {!previewRequested() ? <ReplayTransport /> : null}
       {!previewRequested() ? <BottomMenus /> : null}
     </div>
   );

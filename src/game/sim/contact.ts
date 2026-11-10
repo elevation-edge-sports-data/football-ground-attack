@@ -258,20 +258,22 @@ export function resolveTackle(
   sprinting: boolean,
   stiffArm: boolean,
   age = 0,
+  reachScale = 1,
 ): ContactResult | null {
   const clock = contactOf(defender);
   const dist = Math.hypot(carrier.x - defender.x, carrier.yard - defender.yard);
+  const reach = TACKLE_REACH * (reachScale > 0 ? reachScale : 1);
   const frame = Math.round(age * 60);
   if (!Number.isFinite(dist)) {
     console.error("[contact] non-finite distance", { frame, carrier: carrier.id, defender: defender.id, dist });
     return null;
   }
-  if (dist > TACKLE_REACH + 0.8) {
+  if (dist > reach + 0.8) {
     clock.tackleArmed = false;
     clock.nearLogged = false;
     return null;
   }
-  if (dist > TACKLE_REACH) {
+  if (dist > reach) {
     if (!clock.nearLogged) {
       clock.nearLogged = true;
       console.log("[contact] near miss", {
@@ -280,7 +282,7 @@ export function resolveTackle(
         carrier: carrier.id,
         defender: defender.id,
         dist: round3(dist),
-        reach: TACKLE_REACH,
+        reach,
         playOver: false,
       });
     }
@@ -299,7 +301,7 @@ export function resolveTackle(
     carrier: carrier.id,
     defender: defender.id,
     dist: round3(dist),
-    reach: TACKLE_REACH,
+    reach,
     sprinting,
     stiffArm,
   });

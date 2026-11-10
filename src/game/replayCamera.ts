@@ -9,6 +9,17 @@ const DEFAULT_Z = 16;
 const DEFAULT_DIST = Math.hypot(DEFAULT_Y, DEFAULT_Z);
 const DEFAULT_PITCH = Math.asin(DEFAULT_Y / DEFAULT_DIST);
 
+/** Ground point the replay camera is looking at. The on-field X reads this. */
+export const replayFocus = { x: 0, y: 0.08, z: 0, on: false };
+
+export function markReplayFocus(x: number, z: number, on: boolean) {
+  replayFocus.on = on;
+  if (!on) return;
+  replayFocus.x = x;
+  replayFocus.y = 0.08;
+  replayFocus.z = z;
+}
+
 export const replayCam = {
   on: false,
   /** One frame: sit at the normal offset behind the scrubbed carrier. */
@@ -17,7 +28,15 @@ export const replayCam = {
   exitSnap: false,
   /** Track the scrubbed carrier. Off leaves the orbit where it is. */
   follow: true,
+  /** One frame: keep this eye offset while the look point jumps to a new mark. */
+  snapOffset: null as { x: number; y: number; z: number } | null,
 };
+
+/** Center the replay camera on a new mark without changing the orbit distance. */
+export function replayFocusJump(x: number, y: number, z: number) {
+  replayCam.follow = true;
+  replayCam.snapOffset = { x, y, z };
+}
 
 const held = new Set<string>();
 
@@ -26,6 +45,7 @@ export function setReplayCamera(on: boolean) {
   replayCam.on = on;
   held.clear();
   replayCam.follow = true;
+  replayCam.snapOffset = null;
   if (!on) replayCam.exitSnap = true;
 }
 

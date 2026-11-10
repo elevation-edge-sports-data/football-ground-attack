@@ -7,6 +7,8 @@ import {
   SRGBColorSpace,
   Shape,
   ShapeGeometry,
+  ShapeUtils,
+  Vector2,
 } from "three";
 import type { SurfaceId } from "../game/fieldLook";
 import {
@@ -42,32 +44,64 @@ function pushQuad(
   for (let n = 0; n < 4; n++) colors.push(color.r, color.g, color.b);
 }
 
-/** v10 `stripeFill`. Even 5-yard bands are the lighter stripe, including both end zones. */
+/** v10 `stripeFill` pair. Odd bands counted from each goal line are the lighter stripe. */
 const STRIPES: Record<SurfaceId, { light: string; dark: string }> = {
   grass: { light: "#5d8f4a", dark: "#4e7d3e" },
   astroturf: { light: "#32b056", dark: "#228a42" },
   fieldturf: { light: "#1f5230", dark: "#143820" },
 };
 
+/**
+ * Light stripe when true.
+ * The two shades are swapped from the v10 phase: odd 5-yard bands counted from each goal line are light.
+ * The north half mirrors the south, so yards 45–55 are one band and both ends match.
+ * Each end zone is the 5-to-10 color, which is the light stripe, not the goal-to-5 stripe.
+ */
+function stripeIsLight(yard: number) {
+  if (yard < 0 || yard >= FIELD.length) return true;
+  const band = Math.floor(yard / 5) * 5;
+  const folded = band >= FIELD.length / 2 ? FIELD.length - 5 - band : band;
+  return Math.floor((folded + 1000) / 5) % 2 !== 0;
+}
+
 function stripeColor(surface: SurfaceId, yard: number) {
-  const light = Math.floor((yard + 1000) / 5) % 2 === 0;
   const pair = STRIPES[surface];
-  return new Color(light ? pair.light : pair.dark);
+  return new Color(stripeIsLight(yard) ? pair.light : pair.dark);
+}
+
+function pushBand(
+  positions: number[],
+  colors: number[],
+  indices: number[],
+  width: number,
+  yard0: number,
+  yard1: number,
+  color: Color,
+) {
+  pushQuad(positions, colors, indices, 0, -yard0, width, -yard1, 0, color);
 }
 
 /**
- * Playing surface plus both end zones, in 5-yard stripes.
- * End-zone art is a separate mesh. Off leaves these stripes as the end zone.
+ * Playing surface plus both end zones.
+ * Five-yard stripes mirror across the 50. Yards 45–55 are one quad.
+ * Each end zone is one quad. End-zone art is a separate mesh. Off leaves this color as the end zone.
  */
 export function buildTurfGeometry(surface: SurfaceId) {
   const positions: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
   const width = FIELD.width;
+  const endZone = stripeColor(surface, SOUTH_BACK);
 
-  for (let yard = SOUTH_BACK; yard < NORTH_BACK; yard += 5) {
-    pushQuad(positions, colors, indices, 0, -yard, width, -(yard + 5), 0, stripeColor(surface, yard));
+  pushBand(positions, colors, indices, width, SOUTH_BACK, 0, endZone);
+  for (let yard = 0; yard < 45; yard += 5) {
+    pushBand(positions, colors, indices, width, yard, yard + 5, stripeColor(surface, yard));
   }
+  pushBand(positions, colors, indices, width, 45, 55, stripeColor(surface, 45));
+  for (let yard = 55; yard < FIELD.length; yard += 5) {
+    pushBand(positions, colors, indices, width, yard, yard + 5, stripeColor(surface, yard));
+  }
+  pushBand(positions, colors, indices, width, FIELD.length, NORTH_BACK, endZone);
 
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
@@ -170,29 +204,58 @@ const MOUNTAIN_PEAKS: [number, number][] = [
   [1, 0],
 ];
 
+/** Peak loop in the flat shape, before it is laid on the field. Winding matches the fill. */
+function mountainContour(end: "south" | "north"): [number, number][] {
+  const sign = end === "south" ? -1 : 1;
+  const pts = MOUNTAIN_PEAKS.map(([x, h]) => [x * FIELD.width, sign * h * FIELD.endZone] as [number, number]);
+  // North peaks sit at +Y, so the left-to-right peak order is clockwise and is reversed.
+  // South negates Y, which flips that winding back to counter-clockwise. +Z then becomes +Y.
+  if (sign > 0) {
+    const loop: [number, number][] = [pts[0]!];
+    loop.push(pts[pts.length - 1]!);
+    for (let i = pts.length - 2; i >= 1; i--) loop.push(pts[i]!);
+    return loop;
+  }
+  return pts;
+}
+
+function layEndZoneShape(geometry: BufferGeometry, end: "south" | "north", y: number) {
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(0, y, end === "south" ? 0 : -FIELD.length);
+  geometry.computeVertexNormals();
+}
+
 /**
  * Secondary-color mountain fill for one end.
  * Shape Y grows toward the back of that end, then lies down so the normal is +Y.
  */
 export function buildMountainGeometry(end: "south" | "north") {
-  const sign = end === "south" ? -1 : 1;
-  const pts = MOUNTAIN_PEAKS.map(([x, h]) => [x * FIELD.width, sign * h * FIELD.endZone] as const);
+  const loop = mountainContour(end);
   const shape = new Shape();
-  // North peaks sit at +Y, so the left-to-right peak order is clockwise and is reversed.
-  // South negates Y, which flips that winding back to counter-clockwise. +Z then becomes +Y.
-  if (sign > 0) {
-    shape.moveTo(pts[0][0], pts[0][1]);
-    shape.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-    for (let i = pts.length - 2; i >= 1; i--) shape.lineTo(pts[i][0], pts[i][1]);
-  } else {
-    shape.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
-  }
+  shape.moveTo(loop[0]![0], loop[0]![1]);
+  for (let i = 1; i < loop.length; i++) shape.lineTo(loop[i]![0], loop[i]![1]);
   shape.closePath();
   const geometry = new ShapeGeometry(shape);
-  geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, 0.02, end === "south" ? 0 : -FIELD.length);
-  geometry.computeVertexNormals();
+  layEndZoneShape(geometry, end, 0.02);
+  return geometry;
+}
+
+/**
+ * Primary fill behind the peaks, from the skyline to the back of the end zone.
+ * It stops on the silhouette, so the mountain color is not painted over it.
+ */
+export function buildMountainBackdrop(end: "south" | "north") {
+  const sign = end === "south" ? -1 : 1;
+  const back = sign * FIELD.endZone;
+  const skyline = MOUNTAIN_PEAKS.map(([x, h]) => new Vector2(x * FIELD.width, sign * h * FIELD.endZone));
+  const pts = [...skyline, new Vector2(FIELD.width, back), new Vector2(0, back)];
+  const ring = ShapeUtils.isClockWise(pts) ? pts.slice().reverse() : pts;
+  const shape = new Shape();
+  shape.moveTo(ring[0]!.x, ring[0]!.y);
+  for (let i = 1; i < ring.length; i++) shape.lineTo(ring[i]!.x, ring[i]!.y);
+  shape.closePath();
+  const geometry = new ShapeGeometry(shape);
+  layEndZoneShape(geometry, end, 0.014);
   return geometry;
 }
 

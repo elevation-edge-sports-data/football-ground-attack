@@ -1,4 +1,5 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
+import { readBoard, subscribeBoard } from "./sim/boot";
 import {
   DEFENSE_PERSONNEL,
   OFFENSE_PERSONNEL,
@@ -9,6 +10,7 @@ import {
   subscribePersonnel,
   type PersonnelKey,
 } from "./sim/personnel";
+import { readTapeOn, subscribeTape } from "./tapeReplay";
 import type { PersonnelCounts } from "./sim/types";
 
 const stripStyle: CSSProperties = {
@@ -81,7 +83,7 @@ const valueStyle: CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 
-function Stepper({ group, counts }: { group: PersonnelKey; counts: PersonnelCounts }) {
+function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: PersonnelCounts; steps: boolean }) {
   const label = PERSONNEL_LABEL[group];
   const limit = PERSONNEL_LIMITS[group];
   const value = counts[group];
@@ -89,27 +91,31 @@ function Stepper({ group, counts }: { group: PersonnelKey; counts: PersonnelCoun
     <div style={rowStyle}>
       <span>{label}</span>
       <span style={pmStyle}>
-        <button
-          type="button"
-          aria-label={`${label} decrease`}
-          disabled={value <= limit.min}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => stepPersonnel(group, -1)}
-          style={stepButtonStyle(value <= limit.min)}
-        >
-          −
-        </button>
+        {steps ? (
+          <button
+            type="button"
+            aria-label={`${label} decrease`}
+            disabled={value <= limit.min}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => stepPersonnel(group, -1)}
+            style={stepButtonStyle(value <= limit.min)}
+          >
+            −
+          </button>
+        ) : null}
         <span style={valueStyle}>{value}</span>
-        <button
-          type="button"
-          aria-label={`${label} increase`}
-          disabled={value >= limit.max}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => stepPersonnel(group, 1)}
-          style={stepButtonStyle(value >= limit.max)}
-        >
-          +
-        </button>
+        {steps ? (
+          <button
+            type="button"
+            aria-label={`${label} increase`}
+            disabled={value >= limit.max}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => stepPersonnel(group, 1)}
+            style={stepButtonStyle(value >= limit.max)}
+          >
+            +
+          </button>
+        ) : null}
       </span>
     </div>
   );
@@ -119,16 +125,18 @@ function Panel({
   title,
   groups,
   counts,
+  steps,
 }: {
   title: string;
   groups: readonly PersonnelKey[];
   counts: PersonnelCounts;
+  steps: boolean;
 }) {
   return (
     <div style={panelStyle}>
       <div style={titleStyle}>{title}</div>
       {groups.map((group) => (
-        <Stepper key={group} group={group} counts={counts} />
+        <Stepper key={group} group={group} counts={counts} steps={steps} />
       ))}
     </div>
   );
@@ -137,10 +145,13 @@ function Panel({
 /** Offense and defense personnel steppers. Counts apply on the next snap. */
 export function PersonnelHud() {
   const counts = useSyncExternalStore(subscribePersonnel, readPersonnel);
+  const board = useSyncExternalStore(subscribeBoard, readBoard);
+  const tape = useSyncExternalStore(subscribeTape, readTapeOn);
+  const steps = !board.replay && !tape;
   return (
     <div aria-label="Personnel" style={stripStyle}>
-      <Panel title="Offense" groups={OFFENSE_PERSONNEL} counts={counts} />
-      <Panel title="Defense" groups={DEFENSE_PERSONNEL} counts={counts} />
+      <Panel title="Offense" groups={OFFENSE_PERSONNEL} counts={counts} steps={steps} />
+      <Panel title="Defense" groups={DEFENSE_PERSONNEL} counts={counts} steps={steps} />
     </div>
   );
 }

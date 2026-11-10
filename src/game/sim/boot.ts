@@ -13,6 +13,7 @@ import { DEF_SCHEMES, OFF_PLAYS } from "./plays";
 import { setReplayCamera } from "../replayCamera";
 import { playDiagram, type PlayDiagram } from "../snapArt";
 import { consumeFirstContact, resetFirstContact } from "./contact";
+import { consumeDefenseFinish, resetDefense, seatDefender } from "./defense";
 
 /** Four quarters. The banner quarter stays on the 4th; the clock still rolls all four. */
 export const QUARTER_COUNT = 4;
@@ -67,6 +68,8 @@ export type Scoreboard = {
   awaitSnap: boolean;
   /** Game is the opening mode. Practice hides the clock and calls the picked plays. */
   mode: "game" | "practice";
+  /** Controlled side. Offense is the default. Defense is one user defender. */
+  side: "off" | "def";
 };
 
 export type SessionMode = "game" | "practice";
@@ -98,7 +101,7 @@ let practiceAimX = practiceSpotX;
 let practiceAimYard = practiceSpotYard;
 let practiceSeeded = false;
 /** Snap the live roster was built from. Practice does not overwrite the saved game spot. */
-let lastSnap = { los: BOOT_PLAY.los, snapX: FIELD.width / 2 };
+let lastSnap = { los: BOOT_PLAY.los, snapX: FIELD.width / 2, exact: false };
 let stageSpot = { los: BOOT_PLAY.los, snapX: FIELD.width / 2, exact: true };
 let stageDead = false;
 let stageTitle = "";
@@ -162,6 +165,7 @@ let board: Scoreboard = {
   paused: false,
   awaitSnap: false,
   mode: "game",
+  side: "off",
 };
 /** Seconds left in the current quarter. The board copy updates when the displayed second changes. */
 let clockLeft = QUARTER_SECONDS;
@@ -204,6 +208,64 @@ export function readMode(): SessionMode {
   return sessionMode;
 }
 
+/** Offense unless Defense was selected. Game and Practice share this. */
+export function readPlaySide(): "off" | "def" {
+  return board.side === "def" ? "def" : "off";
+}
+
+/**
+ * One sitting of the box score.
+ * `scores` also clears YOU and CPU. A new game and a mode change do.
+ * An offense/defense change clears the four stat lines and the score too.
+ */
+function clearSittingStats(scores: boolean) {
+  board = {
+    ...board,
+    totalYards: 0,
+    firstDowns: 0,
+    touchdowns: 0,
+    yac: 0,
+    ...(scores ? { youScore: 0, cpuScore: 0 } : {}),
+  };
+}
+
+/**
+ * The game restage has to use the snap that is actually on the field.
+ * `stageSpot` is only the hold from leaving Practice, so a side change
+ * mid-drive would otherwise jump back to the opening line.
+ * A whistle that still has a next snap arms that snap. A finished game does not.
+ */
+function prepareGameSideStage() {
+  // A live play, even at 0:00, re-huddles that snap. The game is dead only after the whistle.
+  const dead = board.over && (clockExpired() || seriesOver || pendingSpot == null);
+  if (dead) {
+    stageDead = true;
+    stageTitle = board.title;
+    stageDetail = board.detail;
+    stageDownText = board.downText;
+    stageSpot = { los: lastSnap.los, snapX: lastSnap.snapX, exact: lastSnap.exact };
+    return;
+  }
+  stageDead = false;
+  if (board.over && pendingSpot) {
+    stageSpot = { los: pendingSpot.los, snapX: pendingSpot.ballX, exact: !!pendingSpot.exact };
+    pendingSpot = null;
+    playIndex = (playIndex + 1) % OFF_PLAYS.length;
+    schemeIndex = (schemeIndex + 1) % DEF_SCHEMES.length;
+    return;
+  }
+  stageSpot = { los: lastSnap.los, snapX: lastSnap.snapX, exact: lastSnap.exact };
+}
+
+/** Restage the huddle. The free safety, or the defender from the last snap, is seated on defense. */
+export function togglePlaySide() {
+  clearSittingStats(true);
+  board = { ...board, side: board.side === "def" ? "off" : "def" };
+  if (sessionMode === "game") prepareGameSideStage();
+  publish();
+  queueStage();
+}
+
 export function subscribePractice(listener: () => void) {
   practiceListeners.add(listener);
   return () => practiceListeners.delete(listener);
@@ -227,6 +289,8 @@ function syncPractice(diagram = practiceUi.diagram) {
 }
 
 function practicePlacement(): PlacementCall {
+  practicePlay = wrapIndex(practicePlay, OFF_PLAYS.length);
+  practiceScheme = wrapIndex(practiceScheme, DEF_SCHEMES.length);
   return {
     los: practiceSpotYard,
     ballX: practiceSpotX,
@@ -264,6 +328,7 @@ function stageForMode(): { sim: Sim; assigned: AssignedPlay; dead: boolean } | n
       dead: false,
     };
   }
+  schemeIndex = wrapIndex(schemeIndex, DEF_SCHEMES.length);
   const built = buildPlay({
     los: stageSpot.los,
     ballX: stageSpot.snapX,
@@ -320,7 +385,7 @@ export function setSessionMode(next: SessionMode) {
       detail: board.detail,
       los: continuing && pendingSpot ? pendingSpot.los : lastSnap.los,
       snapX: continuing && pendingSpot ? pendingSpot.ballX : lastSnap.snapX,
-      exact: continuing && pendingSpot ? !!pendingSpot.exact : true,
+      exact: continuing && pendingSpot ? !!pendingSpot.exact : lastSnap.exact,
       armNext: continuing,
     };
     stageDead = false;
@@ -340,6 +405,7 @@ export function setSessionMode(next: SessionMode) {
     stageDownText = gameHold.downText;
     gameHold = null;
   }
+  clearSittingStats(true);
   sessionMode = mode;
   queueStage();
 }
@@ -583,6 +649,27 @@ export function askReplay() {
   for (const listener of replayListeners) listener();
 }
 
+/** The live play has at least one stored replay frame. A new snap clears it. */
+let replayFootage = false;
+const footageListeners = new Set<() => void>();
+
+export function readReplayFootage() {
+  return replayFootage;
+}
+
+export function subscribeReplayFootage(listener: () => void) {
+  footageListeners.add(listener);
+  return () => {
+    footageListeners.delete(listener);
+  };
+}
+
+export function setReplayFootage(on: boolean) {
+  if (replayFootage === on) return;
+  replayFootage = on;
+  for (const listener of footageListeners) listener();
+}
+
 export type ControlProfile = Scoreboard["profile"];
 
 export const CONTROL_PROFILES: { id: ControlProfile; label: string; blurb: string }[] = [
@@ -739,12 +826,20 @@ function settlePracticePlay(
  * An in-bounds tip is hash-clamped. A touchdown does not also count as a first down.
  */
 export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety = false): { los: number; ballX: number } | null {
+  const finish = consumeDefenseFinish();
   const carrier = sim.players.find((player) => player.controlled);
   const los = sim.los;
   const yard = carrier?.yard ?? los;
   const spotX = ballSpot ? sim.ballX : (carrier?.x ?? FIELD.width * 0.5);
   const measure = ballSpot ? sim.ballYard : yard;
-  if (sessionMode === "practice") return settlePracticePlay(carrier, yard, los, measure, ballSpot, safety);
+  if (sessionMode === "practice") {
+    const spot = settlePracticePlay(carrier, yard, los, measure, ballSpot, safety);
+    if (finish === "fumble" && board.title !== "Touchdown" && board.title !== "Safety") {
+      board = { ...board, title: "Fumble" };
+      publish();
+    }
+    return spot;
+  }
   advanceQuarter();
   const kind = touchdownSide(carrier, yard);
   if (kind) {
@@ -872,8 +967,10 @@ export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPl
   spotChains(sim.los);
   const carrier = assigned.players.find((player) => player.controlled);
   if (carrier) seatBall(sim, carrier);
-  lastSnap = { los: sim.los, snapX: assigned.snapX };
+  if (readPlaySide() === "def") seatDefender(assigned.players);
+  lastSnap = { los: sim.los, snapX: assigned.snapX, exact: !!call.exactSnap };
   syncPractice(playDiagram(assigned, sim.los, assigned.snapX));
+  setReplayFootage(false);
   board = {
     ...board,
     over: false,
@@ -907,6 +1004,7 @@ export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
   schemeIndex = 0;
   pendingSpot = null;
   resetFirstContact();
+  resetDefense();
   board = {
     youScore: 0,
     cpuScore: 0,
@@ -930,6 +1028,7 @@ export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
     paused: false,
     awaitSnap: true,
     mode: sessionMode,
+    side: "off",
   };
   clockLeft = QUARTER_SECONDS;
   quarter = 1;

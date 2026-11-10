@@ -159,14 +159,10 @@ function yawOf(sample: ReplaySample): number {
 
 function nextLock(lock: LookLock, players: readonly FormationPlayer[]): LookLock {
   const ids = players.map((row) => row.id);
-  if (lock.kind === "free") return { kind: "ball" };
-  if (lock.kind === "ball") {
-    const first = ids[0];
-    return first ? { kind: "player", id: first } : { kind: "free" };
-  }
-  const at = ids.indexOf(lock.id);
-  const next = ids[at + 1];
-  return next ? { kind: "player", id: next } : { kind: "free" };
+  const first = ids[0];
+  if (lock.kind !== "player") return first ? { kind: "player", id: first } : { kind: "ball" };
+  const next = ids[ids.indexOf(lock.id) + 1];
+  return next ? { kind: "player", id: next } : { kind: "ball" };
 }
 
 function TransportIcon({
@@ -472,9 +468,9 @@ function ReplayStage({
       if (keys.has("ArrowUp") || keys.has("KeyW")) panYard += 1;
       if (keys.has("ArrowDown") || keys.has("KeyS")) panYard -= 1;
     }
+    const rightMag = Math.hypot(right.x, right.y);
     const orbiting =
-      yDown && (Math.hypot(stick.x, stick.y) > 0.2 || Math.hypot(right.x, right.y) > 0.2) ||
-      Math.hypot(right.x, right.y) > 0.2 ||
+      (yDown && rightMag > 0.2) ||
       (!typing && (keys.has("KeyQ") || keys.has("KeyE") || keys.has("KeyF") || keys.has("KeyV")));
     if (yDown && !yWas.current) yMoved.current = false;
     if (orbiting) yMoved.current = true;
@@ -514,8 +510,8 @@ function ReplayStage({
     if (orbiting || readPadButton(1) || readPadButton(2) || keys.has("PageUp") || keys.has("PageDown")) {
       claimFree();
       const ox = (right.x + (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0)) * dt;
-      const oy = (right.y + (keys.has("KeyF") ? 1 : 0) - (keys.has("KeyV") ? 1 : 0) + (yDown ? -stick.y : 0)) * dt;
-      free.current.theta += ox * 1.6 + (yDown ? stick.x : 0) * dt * 1.6;
+      const oy = (right.y + (keys.has("KeyF") ? 1 : 0) - (keys.has("KeyV") ? 1 : 0)) * dt;
+      free.current.theta += ox * 1.6;
       free.current.phi = clamp(free.current.phi - oy * 1.1, CAM_PHI_MIN, CAM_PHI_MAX);
       let radius = free.current.radius;
       if (readPadButton(2) || keys.has("PageUp") || keys.has("Equal")) radius *= Math.exp(-1.4 * dt);

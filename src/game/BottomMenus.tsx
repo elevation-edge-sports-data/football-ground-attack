@@ -10,9 +10,9 @@ import {
   type EzArtId,
   type EzTone,
 } from "./fieldLook";
-import { ModeToggle } from "./ModeToggle";
-import { CONTROL_PROFILES, askReplay, readBoard, setProfile, subscribeBoard, type ControlProfile } from "./sim/boot";
-import { readTapeOn, subscribeTape } from "./tapeReplay";
+import { ModeToggle, PlaySideButton } from "./ModeToggle";
+import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
+import { beginTape, readTapeOn, readTapeReady, stopTape, subscribeTape, subscribeTapeReady } from "./tapeReplay";
 
 type MenuId = "camera" | "field" | "controller";
 type FieldPanel = "surface" | "ezart";
@@ -41,21 +41,22 @@ const row: CSSProperties = {
   gap: 6,
 };
 
-function choiceStyle(on: boolean): CSSProperties {
+function choiceStyle(on: boolean, enabled = true): CSSProperties {
   return {
     minHeight: 44,
     padding: "0 16px",
     borderRadius: 6,
     border: "1px solid",
-    borderColor: on ? "#e8ece6" : "#243040",
-    background: on ? "#e8ece6" : "#171e28",
-    color: on ? "#070b12" : "#e8ece6",
+    borderColor: !enabled ? "#2a3340" : on ? "#e8ece6" : "#243040",
+    background: !enabled ? "#10161e" : on ? "#e8ece6" : "#171e28",
+    color: !enabled ? "#6b7280" : on ? "#070b12" : "#e8ece6",
     fontFamily: '"Barlow Condensed", sans-serif',
     fontSize: 16,
     fontWeight: 700,
     letterSpacing: "0.08em",
     textTransform: "uppercase",
-    cursor: "pointer",
+    cursor: enabled ? "pointer" : "default",
+    opacity: enabled ? 1 : 0.45,
     whiteSpace: "nowrap",
   };
 }
@@ -80,7 +81,29 @@ export function BottomMenus() {
   const [fieldPanel, setFieldPanel] = useState<FieldPanel | null>(null);
   const mode = useSyncExternalStore(subscribeCamMode, readCamMode);
   const board = useSyncExternalStore(subscribeBoard, readBoard);
+  const footage = useSyncExternalStore(subscribeReplayFootage, readReplayFootage);
   const tape = useSyncExternalStore(subscribeTape, readTapeOn);
+  const tapeReady = useSyncExternalStore(subscribeTapeReady, readTapeReady);
+  const playFootage = board.over && footage;
+  const replayOn = board.replay || tape;
+  const replayReady = replayOn || playFootage || tapeReady;
+  const onReplay = () => {
+    if (board.replay) {
+      askReplay();
+      return;
+    }
+    if (readTapeOn()) {
+      stopTape();
+      return;
+    }
+    if (playFootage) {
+      askReplay();
+      return;
+    }
+    if (!readTapeReady()) return;
+    if (!readPaused()) setPaused(true);
+    beginTape();
+  };
   const look = useSyncExternalStore(subscribeFieldLook, readFieldLook);
   const toggle = (id: MenuId) => {
     setMenu((cur) => (cur === id ? null : id));
@@ -88,16 +111,19 @@ export function BottomMenus() {
   };
   const toggleField = (id: FieldPanel) => setFieldPanel((cur) => (cur === id ? null : id));
   return (
-    <div style={{ ...dock, bottom: tape ? 68 : 16 }}>
+    <div style={{ ...dock, bottom: tape || board.replay ? 112 : 16 }}>
       <div style={stack}>
         <div style={row}>
           <ModeToggle mode={board.mode} embedded />
+          <PlaySideButton side={board.side} />
           <button
             type="button"
-            style={choiceStyle(board.replay)}
-            aria-pressed={board.replay}
+            style={choiceStyle(replayOn, replayReady)}
+            aria-pressed={replayOn}
+            disabled={!replayReady}
+            title={replayReady ? "Replay" : "No replay footage"}
             onMouseDown={holdFocus}
-            onClick={askReplay}
+            onClick={onReplay}
           >
             Replay
           </button>
@@ -211,7 +237,7 @@ function PickButton({ label, on, onPick }: { label: string; on: boolean; onPick:
 
 const EZ_CHOICES: { id: EzArtId; label: string }[] = [
   { id: "mountains", label: "Mountains" },
-  { id: "diamonds", label: "Diamond" },
+  { id: "diamonds", label: "Diamonds" },
   { id: "solid", label: "Solid" },
   { id: "off", label: "Off" },
 ];

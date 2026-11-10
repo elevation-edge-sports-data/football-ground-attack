@@ -56,6 +56,7 @@ export function PlayerFigure({
   ballSide = "r",
   pose,
   ring = false,
+  mark,
   onJointRefs,
   onJointClick,
 }: {
@@ -69,6 +70,8 @@ export function PlayerFigure({
   pose?: string;
   /** Ground ring in the pose editor. The controlled player already has one. */
   ring?: boolean;
+  /** When set, this chooses the ring instead of `controlled`. */
+  mark?: boolean;
   onJointRefs?: (refs: Partial<Record<PoseJointId, Object3D | null>>) => void;
   onJointClick?: (id: PoseJointId) => void;
 }) {
@@ -143,7 +146,7 @@ export function PlayerFigure({
 
   return (
     <group onClick={onJointClick ? selectPart : undefined}>
-      {controlled || ring ? (
+      {(mark ?? (controlled || ring)) ? (
         <mesh name="player-ring" rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[0.52, 0.68, 24]} />
           <meshBasicMaterial color="#f4efe4" side={DoubleSide} />

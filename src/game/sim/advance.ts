@@ -21,6 +21,7 @@ import { step, type Input, type Player, type Sim } from "../sim";
 import type { PlayInput } from "./types";
 import type { AssignedPlay, AssignedPlayer, ReplayFrame } from "./assign";
 import { contactOf, resolveBlockContact, resolveTackle, tickContact } from "./contact";
+import { readUserDefenderId, tickDefenseLive, userTackleScale, type DefenseStick } from "./defense";
 import { flushStanceReleases, releaseStance } from "./stance";
 import type { BlockAssignment, ContactResult, DefenseAssignment, PlayAssignment, RouteAssignment } from "./types";
 
@@ -355,6 +356,8 @@ function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
   tape.frames.push({
     age: assigned.age,
     pose: sim.pose,
+    ballX: sim.ballX,
+    ballYard: sim.ballYard,
     players: sim.players.map((player) => ({
       id: player.id,
       x: player.x,
@@ -400,6 +403,8 @@ export function sampleReplay(frames: readonly ReplayFrame[], age: number): Repla
   return {
     age,
     pose: t < 0.5 ? before.pose : after.pose,
+    ballX: before.ballX + (after.ballX - before.ballX) * t,
+    ballYard: before.ballYard + (after.ballYard - before.ballYard) * t,
     players: before.players.map((left) => {
       const right = nextById.get(left.id);
       if (!right) return left;
@@ -418,6 +423,33 @@ export function sampleReplay(frames: readonly ReplayFrame[], age: number): Repla
   };
 }
 
+/** Offense runs the called route, then north, when the user is on defense. */
+function cpuCarry(assigned: AssignedPlay, aimed: Input): Input {
+  const found = carrierRoute(assigned);
+  if (found && found.route.index < found.route.steps.length) return { ...aimed, action: "carry", sprint: false };
+  const carrier = found?.player ?? assigned.players.find((player) => player.controlled);
+  if (!carrier) return { x: 0, yard: 1, action: "carry", sprint: false };
+  let x = 0.15;
+  let yard = 1;
+  let nearest = Infinity;
+  let nearestX = carrier.x;
+  for (const player of assigned.players) {
+    if (player.team !== "def") continue;
+    if (contactOf(player).pancake > 0) continue;
+    const gap = dist(player, carrier);
+    if (gap < nearest) {
+      nearest = gap;
+      nearestX = player.x;
+    }
+  }
+  if (nearest < 4.4) {
+    const away = Math.sign(carrier.x - nearestX) || 1;
+    x += away * (nearest < 2.15 ? 1.2 : 0.72);
+  }
+  const mag = Math.hypot(x, yard) || 1;
+  return { x: x / mag, yard: yard / mag, action: "carry", sprint: nearest > 6 };
+}
+
 function syncById(from: readonly Player[], to: readonly Player[]) {
   const byId = new Map(from.map((player) => [player.id, player]));
   for (const player of to) {
@@ -431,26 +463,41 @@ function syncById(from: readonly Player[], to: readonly Player[]) {
  * Returns the input `step` actually received. The route replaces the stick
  * until the path ends or the stick breaks it.
  */
-export function stepAssignments(sim: Sim, assigned: AssignedPlay, input: Input & Partial<PlayInput>, dt: number): Input {
+export function stepAssignments(
+  sim: Sim,
+  assigned: AssignedPlay,
+  input: Input & Partial<PlayInput> & { defense?: DefenseStick | null },
+  dt: number,
+): Input {
   // Armed formation. Poses are already on the roster. Movement, the carrier
   // pose clock, and stance release wait until the user snaps.
-  if (sim.playOver || !assigned.snapped) return input;
+  // A whistle does not stop this. Bodies keep moving until the next lineup replaces them.
+  if (!assigned.snapped) return input;
+  const wasOver = sim.playOver;
   const bounded = dt > 0 ? Math.min(dt, 0.05) : 0;
   assigned.age += bounded;
-  const aimed = desiredCarrierInput(assigned, input, bounded);
-  const desired: Input = { x: aimed.x, yard: aimed.yard, action: aimed.action, sprint: aimed.sprint };
+  const playingDef = input.defense != null;
+  const aimed = desiredCarrierInput(
+    assigned,
+    playingDef ? { x: 0, yard: 0, action: "carry", sprint: false } : input,
+    bounded,
+  );
+  const desired: Input = playingDef
+    ? cpuCarry(assigned, aimed)
+    : { x: aimed.x, yard: aimed.yard, action: aimed.action, sprint: aimed.sprint };
   const carrier = assigned.players.find((player) => player.controlled) ?? null;
-  const stiffArm = input.action === "stiffL" || input.action === "stiffR";
+  const stiffArm = !playingDef && (input.action === "stiffL" || input.action === "stiffR");
+  const userId = playingDef ? readUserDefenderId() : null;
   if (bounded > 0) {
     for (const player of assigned.players) tickContact(player, bounded);
   }
   if (carrier && bounded > 0) {
     retargetBlockers(assigned.players, carrier, assigned.snapX, sim.los);
-    const steeredLeft = input.steerLeft ? nearestTeammate(assigned.players, carrier, -1) : null;
-    const steeredRight = input.steerRight ? nearestTeammate(assigned.players, carrier, 1) : null;
+    const steeredLeft = !playingDef && input.steerLeft ? nearestTeammate(assigned.players, carrier, -1) : null;
+    const steeredRight = !playingDef && input.steerRight ? nearestTeammate(assigned.players, carrier, 1) : null;
     const style = defenseStyle(assigned.scheme.id);
     for (const player of assigned.players) {
-      if (player.controlled) continue;
+      if (player.controlled || player.id === userId) continue;
       const clock = contactOf(player);
       if (clock.pancake > 0) continue;
       if (player.team === "def" && clock.engage > 0) continue;
@@ -466,6 +513,14 @@ export function stepAssignments(sim: Sim, assigned: AssignedPlay, input: Input &
         : aimFor(player, assigned.players, carrier, sim.los, assigned.age, style);
       if (aim) seek(player, aim.x, aim.yard, bounded, scale);
     }
+    const live = playingDef && input.defense
+      ? tickDefenseLive(assigned.players, carrier, input.defense, bounded, sim.los)
+      : null;
+    if (live) {
+      desired.x *= live.carrierScale;
+      desired.yard *= live.carrierScale;
+      if (live.carrierScale < 1) desired.sprint = false;
+    }
     for (const player of assigned.players) {
       const block = player.assignment;
       if (!isBlock(block) || !block.targetId) continue;
@@ -478,9 +533,11 @@ export function stepAssignments(sim: Sim, assigned: AssignedPlay, input: Input &
       .filter((player) => player.team === "def" && !player.controlled)
       .sort((a, b) => dist(a, carrier) - dist(b, carrier));
     for (const defender of threats) {
+      const reachScale = defender.id === userId ? userTackleScale() : 1;
+      if (reachScale <= 0) continue;
       let tackle: ContactResult | null = null;
       try {
-        tackle = resolveTackle(carrier, defender, input.sprint, stiffArm, assigned.age);
+        tackle = resolveTackle(carrier, defender, desired.sprint, stiffArm, assigned.age, reachScale);
       } catch (err) {
         console.error("[contact] threw", {
           frame: Math.round(assigned.age * 60),
@@ -490,26 +547,36 @@ export function stepAssignments(sim: Sim, assigned: AssignedPlay, input: Input &
         continue;
       }
       // A whiff, a near miss, and a thrown check leave the play running.
+      // A tackle whistles, but it does not stop the bodies. The lineup cut does that.
       if (tackle?.outcome !== "tackled") continue;
+      if (!sim.playOver) {
+        sim.playOver = true;
+        console.log("[playOver] set", {
+          frame: Math.round(assigned.age * 60),
+          age: Number(assigned.age.toFixed(3)),
+          reason: "tackled",
+          defender: defender.id,
+          carrier: carrier.id,
+          dist: Number(Math.hypot(carrier.x - defender.x, carrier.yard - defender.yard).toFixed(3)),
+        });
+      }
+      break;
+    }
+    if (live?.endPlay && !sim.playOver) {
       sim.playOver = true;
-      desired.x = 0;
-      desired.yard = 0;
-      desired.sprint = false;
       console.log("[playOver] set", {
         frame: Math.round(assigned.age * 60),
         age: Number(assigned.age.toFixed(3)),
-        reason: "tackled",
-        defender: defender.id,
+        reason: live.fumble ? "fumble" : "user tackle",
+        defender: userId,
         carrier: carrier.id,
-        dist: Number(Math.hypot(carrier.x - defender.x, carrier.yard - defender.yard).toFixed(3)),
       });
-      break;
     }
   }
   syncById(assigned.players, sim.players);
   step(sim, desired, dt);
   syncById(sim.players, assigned.players);
-  recordReplay(sim, assigned, bounded, sim.playOver);
+  if (!wasOver) recordReplay(sim, assigned, bounded, sim.playOver);
   flushStanceReleases();
   return desired;
 }

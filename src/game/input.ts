@@ -261,6 +261,27 @@ export function readPadButton(index: number): boolean {
 }
 
 /**
+ * Replay transport on the standard layout. Raw T-9 uses T9_BTN_MAP, so Y, the
+ * bumpers, and the triggers are the physical buttons. Live play does not call this.
+ * A pad that is not standard and not T-9 still reports LT/RT on axes 2 and 5.
+ */
+export function readReplayPad(index: number): boolean {
+  const pads = typeof navigator !== "undefined" ? navigator.getGamepads?.() : null;
+  if (!pads) return false;
+  for (const pad of pads) {
+    if (!pad || pad.connected === false) continue;
+    const rawT9 = isT9Family(pad) && pad.mapping !== "standard";
+    const mapped = rawT9 ? (T9_BTN_MAP[index] ?? index) : index;
+    if (padPressed(pad, mapped)) return true;
+    if (!rawT9 && pad.mapping !== "standard" && (index === 6 || index === 7)) {
+      const axis = index === 6 ? (pad.axes[2] ?? 0) : (pad.axes[5] ?? 0);
+      if (axis > 0.4) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Basic stiff-arm. Buttons 6 and 7 are LT/RT on a standard pad.
  * Axes 2 and 5 are triggers only when the pad is not T-9 and not standard-mapped.
  * On those pads the same axes are the right stick.
@@ -371,4 +392,80 @@ export function readBlockerStick(keys: ReadonlySet<string>): { x: number; y: num
 
 export function isMoveCode(code: string) {
   return MOVE_CODES.has(code) || ACTION_CODES.has(code);
+}
+
+/**
+ * Defense buttons, the same on every profile.
+ * Left stick and WASD move. LT/RT are wrap and punch. The right stick is the hit stick.
+ * Face buttons stay A sprint, B switch, X dive, Y shed. LB or RB strafes.
+ */
+export type RawDefense = {
+  /** Screen axes. +x is screen-right. +y is screen-up. */
+  moveX: number;
+  moveY: number;
+  sprint: boolean;
+  switchOn: boolean;
+  dive: boolean;
+  shed: boolean;
+  wrap: boolean;
+  punch: boolean;
+  strafe: boolean;
+  /** Screen axes of the hit stick. +y is stick-up. */
+  hitX: number;
+  hitY: number;
+  /** D-pad aim for a switch. +y is up. */
+  dpadX: number;
+  dpadY: number;
+  cyclePrev: boolean;
+  cycleNext: boolean;
+  snapY: boolean;
+  snapEnter: boolean;
+  padA: boolean;
+  aimCarrier: boolean;
+};
+
+export function readRawDefense(keys: ReadonlySet<string>): RawDefense {
+  const pad = readBasicPad();
+  const keysMove = keyAxis(keys);
+  let moveX = keysMove.x;
+  let moveY = keysMove.yard;
+  if (pad) {
+    const stick = radialDeadzone(pad.x, -pad.y);
+    if (stick.x !== 0 || stick.y !== 0) {
+      moveX = stick.x;
+      moveY = stick.y;
+    }
+  }
+  const rs = readRightStick();
+  let hitX = rs.x;
+  let hitY = rs.y;
+  if (Math.hypot(hitX, hitY) < 0.2) {
+    const keyX = (keys.has("KeyL") ? 1 : 0) - (keys.has("KeyJ") ? 1 : 0);
+    const keyY = (keys.has("KeyI") ? 1 : 0) - (keys.has("KeyK") ? 1 : 0);
+    if (Math.hypot(keyX, keyY) > 0.2) {
+      hitX = keyX;
+      hitY = keyY;
+    }
+  }
+  return {
+    moveX,
+    moveY,
+    sprint: keys.has("Space") || !!pad?.sprint,
+    switchOn: keys.has("KeyF") || !!pad?.spin,
+    dive: keys.has("KeyC") || !!pad?.dive,
+    shed: keys.has("KeyV") || keys.has("KeyY") || !!pad?.truck,
+    wrap: keys.has("KeyQ") || !!pad?.stiffL,
+    punch: keys.has("KeyE") || !!pad?.stiffR,
+    strafe: keys.has("ShiftLeft") || keys.has("ShiftRight") || !!pad?.jukeL || !!pad?.jukeR,
+    hitX,
+    hitY,
+    dpadX: pad ? (pad.right ? 1 : 0) - (pad.left ? 1 : 0) : 0,
+    dpadY: pad ? (pad.up ? 1 : 0) - (pad.down ? 1 : 0) : 0,
+    cyclePrev: keys.has("BracketLeft") || keys.has("Comma"),
+    cycleNext: keys.has("BracketRight") || keys.has("Period"),
+    snapY: keys.has("KeyY") || !!pad?.truck,
+    snapEnter: keys.has("Enter") || keys.has("NumpadEnter"),
+    padA: !!pad?.sprint,
+    aimCarrier: keys.has("KeyT"),
+  };
 }

@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { setSessionMode, type SessionMode } from "./sim/boot";
+import { setSessionMode, togglePlaySide, type SessionMode } from "./sim/boot";
 
 const group: CSSProperties = {
   display: "flex",
@@ -41,9 +41,36 @@ function optionStyle(on: boolean): CSSProperties {
 export function ModeToggle({ mode, embedded = false }: { mode: SessionMode; embedded?: boolean }) {
   return (
     <div role="group" aria-label="Mode" style={embedded ? group : dock}>
-      <ModeButton mode="game" current={mode} label="Game" />
-      <ModeButton mode="practice" current={mode} label="Practice" />
+      <ModeButton mode="game" current={mode} label="GAME" />
+      <ModeButton mode="practice" current={mode} label="PRACTICE" />
     </div>
+  );
+}
+
+/** Offense | Defense. Same chrome as Game | Practice. Offense is the default. */
+export function PlaySideButton({ side }: { side: "off" | "def" }) {
+  return (
+    <div role="group" aria-label="Play as" style={group}>
+      <SideButton side="off" current={side} label="OFFENSE" />
+      <SideButton side="def" current={side} label="DEFENSE" />
+    </div>
+  );
+}
+
+function SideButton({ side, current, label }: { side: "off" | "def"; current: "off" | "def"; label: string }) {
+  const on = current === side;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => {
+        if (!on) togglePlaySide();
+      }}
+      style={optionStyle(on)}
+    >
+      {label}
+    </button>
   );
 }
 

@@ -46,6 +46,8 @@ let on = false;
 let playing = false;
 let locked = false;
 let time = 0;
+/** On-screen shuttle. 0 when the buttons are up. Pad and keys still win. */
+let heldScrub: TapeScrub = 0;
 
 /** Working copy while locked. Unlock puts the recorded frame back. */
 let edit: TapeFrame | null = null;
@@ -126,6 +128,32 @@ export function readTapeLocked() {
 
 export function readTapePlaying() {
   return playing && !locked;
+}
+
+function scrubForRate(rate: number): TapeScrub {
+  if (rate <= -1) return -2;
+  if (rate < 0) return -1;
+  if (rate >= 1) return 2;
+  if (rate > 0) return 1;
+  return 0;
+}
+
+export function readTapeHeldScrub(): TapeScrub {
+  return heldScrub;
+}
+
+export function pressTapeShuttle(rate: number) {
+  if (!on || locked) return;
+  heldScrub = scrubForRate(rate);
+  if (heldScrub !== 0) playing = false;
+  publish();
+}
+
+export function releaseTapeShuttle(rate: number) {
+  const scrub = scrubForRate(rate);
+  if (heldScrub !== scrub) return;
+  heldScrub = 0;
+  publish();
 }
 
 export function tapeSpan() {
@@ -229,6 +257,7 @@ export function stopTape() {
   on = false;
   playing = false;
   locked = false;
+  heldScrub = 0;
   play = [];
   time = 0;
   clearEdit();
@@ -468,6 +497,7 @@ export function redoTapeEdit() {
 
 export function toggleTapePlay() {
   if (!on || locked || !play.length) return;
+  heldScrub = 0;
   const atEnd = play.length > 1 && time >= tapeSpan() - 1e-4;
   if (playing && !atEnd) {
     playing = false;
@@ -512,6 +542,7 @@ export function selfTestTape() {
   playing = false;
   locked = false;
   time = 0;
+  heldScrub = 0;
   ready = false;
   clearEdit();
   const sim = {

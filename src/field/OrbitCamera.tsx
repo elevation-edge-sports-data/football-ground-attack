@@ -17,10 +17,11 @@ import {
   type CamMode,
 } from "../game/cameraMode";
 import { practiceSpotAiming, previewRequested, readAwaitSnap, readPaused, readProfile } from "../game/sim/boot";
-import { radialDeadzone, readBasicPad, readPadButton, readRightStick, readTriggerZoom } from "../game/input";
+import { radialDeadzone, readBasicPad, readPadButton, readReplayPad, readRightStick, readTriggerZoom } from "../game/input";
 import { readTapeOn, tapeEditOwnsMove } from "../game/tapeReplay";
 import {
   defaultReplaySphere,
+  markReplayFocus,
   offsetFromSphere,
   replayCam,
   replayHeld,
@@ -54,6 +55,15 @@ function driveReplay(camera: PerspectiveCamera, orbit: OrbitControls, dt: number
     placeOffset(camera, orbit, placed.x, placed.y, placed.z);
     replayCam.snap = false;
     orbit.update();
+    markReplayFocus(orbit.target.x, orbit.target.z, true);
+    return;
+  }
+  if (replayCam.snapOffset) {
+    const jump = replayCam.snapOffset;
+    replayCam.snapOffset = null;
+    placeOffset(camera, orbit, jump.x, jump.y, jump.z);
+    orbit.update();
+    markReplayFocus(orbit.target.x, orbit.target.z, true);
     return;
   }
   const anchorX = replayCam.follow ? followTarget.x : orbit.target.x;
@@ -68,14 +78,20 @@ function driveReplay(camera: PerspectiveCamera, orbit: OrbitControls, dt: number
   if (held.has("KeyE")) yaw += 1.1 * step;
   if (held.has("KeyF")) pitch += 0.7 * step;
   if (held.has("KeyV")) pitch -= 0.7 * step;
-  if (held.has("PageUp") || held.has("Equal") || held.has("NumpadAdd")) dist *= Math.exp(-1.5 * step);
-  if (held.has("PageDown") || held.has("Minus") || held.has("NumpadSubtract")) dist *= Math.exp(1.5 * step);
+  if (held.has("PageUp") || held.has("Equal") || held.has("NumpadAdd") || readReplayPad(2)) dist *= Math.exp(-1.5 * step);
+  if (held.has("PageDown") || held.has("Minus") || held.has("NumpadSubtract") || readReplayPad(1)) dist *= Math.exp(1.5 * step);
+  const right = readRightStick();
+  if (right.x !== 0 || right.y !== 0) {
+    yaw += right.x * 1.1 * step;
+    pitch += right.y * 0.7 * step;
+  }
   dist = Math.max(2, Math.min(260, dist));
   pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, pitch));
   const next = offsetFromSphere({ dist, yaw, pitch });
   if (replayCam.follow) placeOffset(camera, orbit, next.x, next.y, next.z);
   else camera.position.set(anchorX + next.x, anchorY + next.y, anchorZ + next.z);
   orbit.update();
+  markReplayFocus(orbit.target.x, orbit.target.z, true);
 }
 
 function emptyGesture(): Gesture {
@@ -315,16 +331,25 @@ function truckPan(camera: PerspectiveCamera, orbit: OrbitControls, panX: number,
   camera.position.z += dz;
 }
 
-type TapeCamInput = { panX: number; panY: number; orbit: boolean; zoom: number; keyYaw: number; keyPitch: number };
+type TapeCamInput = {
+  panX: number;
+  panY: number;
+  orbit: boolean;
+  spinX: number;
+  spinY: number;
+  zoom: number;
+  keyYaw: number;
+  keyPitch: number;
+};
 
 function readTapeCam(keys: ReadonlySet<string>): TapeCamInput {
-  const yHeld = readPadButton(3) || keys.has("KeyY");
+  const yHeld = readReplayPad(3) || keys.has("KeyY");
   const steerPlayer = tapeEditOwnsMove() && !yHeld;
-  const pad = readBasicPad();
-  const stick = pad && !steerPlayer ? radialDeadzone(pad.x, -pad.y) : { x: 0, y: 0 };
-  let panX = stick.x;
-  let panY = stick.y;
-  if (!steerPlayer) {
+  const right = readRightStick();
+  const orbitStick = yHeld && (right.x !== 0 || right.y !== 0);
+  let panX = orbitStick ? right.x : 0;
+  let panY = orbitStick ? right.y : 0;
+  if (!steerPlayer && !orbitStick) {
     panX += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
     panY += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0);
   }
@@ -334,15 +359,24 @@ function readTapeCam(keys: ReadonlySet<string>): TapeCamInput {
     panY /= mag;
   }
   let zoom = 0;
-  if (readPadButton(2) || keys.has("KeyX") || keys.has("PageUp") || keys.has("Equal") || keys.has("NumpadAdd")) zoom += 1;
-  if (readPadButton(1) || keys.has("KeyB") || keys.has("PageDown") || keys.has("Minus") || keys.has("NumpadSubtract")) zoom -= 1;
+  if (readReplayPad(2) || keys.has("KeyX") || keys.has("PageUp") || keys.has("Equal") || keys.has("NumpadAdd")) zoom += 1;
+  if (readReplayPad(1) || keys.has("KeyB") || keys.has("PageDown") || keys.has("Minus") || keys.has("NumpadSubtract")) zoom -= 1;
   let keyYaw = 0;
   let keyPitch = 0;
   if (keys.has("KeyQ") || keys.has("BracketLeft")) keyYaw -= 1;
   if (keys.has("KeyE") || keys.has("BracketRight")) keyYaw += 1;
   if (keys.has("KeyF")) keyPitch += 1;
   if (keys.has("KeyV")) keyPitch -= 1;
-  return { panX, panY, orbit: readPadButton(3) || keys.has("KeyY"), zoom, keyYaw, keyPitch };
+  return {
+    panX,
+    panY,
+    orbit: orbitStick,
+    spinX: orbitStick ? 0 : right.x,
+    spinY: orbitStick ? 0 : right.y,
+    zoom,
+    keyYaw,
+    keyPitch,
+  };
 }
 
 /**
@@ -360,7 +394,8 @@ function driveTapeCamera(
 ) {
   const input = readTapeCam(keys);
   const turning = input.keyYaw !== 0 || input.keyPitch !== 0;
-  const moving = input.panX !== 0 || input.panY !== 0 || input.zoom !== 0 || turning;
+  const spinning = input.spinX !== 0 || input.spinY !== 0;
+  const moving = input.panX !== 0 || input.panY !== 0 || input.zoom !== 0 || turning || spinning;
   let mode = readCamMode();
   if (moving && mode !== "freestyle") {
     seatFreestyle(camera, orbit, false);
@@ -373,6 +408,7 @@ function driveTapeCamera(
     const snap = applied.current !== mode;
     applied.current = mode;
     driveScripted(camera, orbit, mode, step, snap, chase);
+    markReplayFocus(orbit.target.x, orbit.target.z, true);
     return;
   }
   if (applied.current !== "freestyle") {
@@ -388,27 +424,28 @@ function driveTapeCamera(
   setFov(camera, FREESTYLE_FOV);
   shiftFollow(camera, orbit, followed);
   const stickOrbit = input.orbit && (input.panX !== 0 || input.panY !== 0);
-  if (stickOrbit || turning) {
+  if (stickOrbit || turning || spinning) {
     applyGesture(
       orbit,
       {
-        stickYaw: input.orbit ? input.panX : 0,
-        stickPitch: input.orbit ? input.panY : 0,
+        stickYaw: (input.orbit ? input.panX : 0) + input.spinX,
+        stickPitch: (input.orbit ? input.panY : 0) + input.spinY,
         keyYaw: input.keyYaw,
         keyPitch: input.keyPitch,
         zoom: 0,
       },
       step,
     );
-  } else if (input.panX !== 0 || input.panY !== 0) {
+  }
+  if (!stickOrbit && (input.panX !== 0 || input.panY !== 0)) {
     truckPan(camera, orbit, input.panX, input.panY, step);
   }
   if (input.zoom !== 0) {
     applyGesture(orbit, { stickYaw: 0, stickPitch: 0, keyYaw: 0, keyPitch: 0, zoom: input.zoom }, step);
-  } else if (!stickOrbit && !turning) {
-    orbit.update();
   }
+  orbit.update();
   writeFreeCam(camera.position.x - orbit.target.x, camera.position.y - orbit.target.y, camera.position.z - orbit.target.z);
+  markReplayFocus(orbit.target.x, orbit.target.z, true);
 }
 
 const TAPE_CAM_KEYS = new Set([
@@ -449,6 +486,7 @@ export function CameraRig() {
   const controls = useRef<OrbitControls | null>(null);
   const keys = useRef(new Set<string>());
   const applied = useRef<CamMode | "">("");
+  const spotting = useRef(false);
   const chase = useRef({ x: 0, z: -1 });
   const followed = useRef({ x: followTarget.x, y: followTarget.y, z: followTarget.z });
   /** Pre-snap orbit stays put until the formation or the camera mode changes. */
@@ -589,10 +627,44 @@ export function CameraRig() {
       replayCam.exitSnap = false;
       applied.current = "";
     }
+    if (!readTapeOn()) markReplayFocus(0, 0, false);
     if (readTapeOn()) {
       driveTapeCamera(cam, orbit, step, keys.current, followed.current, chase.current, applied);
       return;
     }
+    if (practiceSpotAiming()) {
+      const entered = !spotting.current;
+      spotting.current = true;
+      if (entered) {
+        const ox = followTarget.x - orbit.target.x;
+        const oy = followTarget.y - orbit.target.y;
+        const oz = followTarget.z - orbit.target.z;
+        cam.position.x += ox;
+        cam.position.y += oy;
+        cam.position.z += oz;
+        orbit.target.set(followTarget.x, followTarget.y, followTarget.z);
+      } else {
+        const dx = followTarget.x - followed.current.x;
+        const dy = followTarget.y - followed.current.y;
+        const dz = followTarget.z - followed.current.z;
+        cam.position.x += dx;
+        cam.position.y += dy;
+        cam.position.z += dz;
+        orbit.target.x += dx;
+        orbit.target.y += dy;
+        orbit.target.z += dz;
+      }
+      followed.current.x = followTarget.x;
+      followed.current.y = followTarget.y;
+      followed.current.z = followTarget.z;
+      orbit.enabled = true;
+      orbit.enableRotate = false;
+      orbit.enablePan = false;
+      orbit.enableZoom = true;
+      orbit.update();
+      return;
+    }
+    spotting.current = false;
     let mode = readCamMode();
     const paused = readPaused();
     // The pause screen keeps the current picture. Mouse drag, the wheel, and X/B can move it.

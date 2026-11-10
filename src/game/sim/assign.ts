@@ -145,6 +145,9 @@ export type ReplayFrame = {
   /** `AssignedPlay.age` when the sample was taken. */
   age: number;
   pose: string;
+  /** Football at this sample. The scrub lock can sit on it, apart from any player. */
+  ballX: number;
+  ballYard: number;
   players: ReplaySample[];
 };
 

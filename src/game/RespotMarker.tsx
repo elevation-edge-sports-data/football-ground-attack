@@ -61,16 +61,24 @@ export function RespotMarker() {
   });
 
   if (ui.mode !== "practice" || !ui.aiming) return null;
-  const [x, y, z] = worldFromField(ui.aimX, ui.aimYard, 0.2);
+  const [x, y, z] = worldFromField(ui.aimX, ui.aimYard, 0.08);
   return (
     <group position={[x, y, z]}>
+      <mesh rotation={[0, Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
+        <boxGeometry args={[1.9, 0.02, 0.28]} />
+        <meshBasicMaterial color="#4a1608" toneMapped={false} />
+      </mesh>
+      <mesh rotation={[0, -Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
+        <boxGeometry args={[1.9, 0.02, 0.28]} />
+        <meshBasicMaterial color="#4a1608" toneMapped={false} />
+      </mesh>
       <mesh rotation={[0, Math.PI / 4, 0]} raycast={() => null}>
-        <boxGeometry args={[3.2, 0.35, 0.42]} />
-        <meshBasicMaterial color="#fb4f14" />
+        <boxGeometry args={[1.75, 0.035, 0.16]} />
+        <meshBasicMaterial color="#fb4f14" toneMapped={false} />
       </mesh>
       <mesh rotation={[0, -Math.PI / 4, 0]} raycast={() => null}>
-        <boxGeometry args={[3.2, 0.35, 0.42]} />
-        <meshBasicMaterial color="#fb4f14" />
+        <boxGeometry args={[1.75, 0.035, 0.16]} />
+        <meshBasicMaterial color="#fb4f14" toneMapped={false} />
       </mesh>
     </group>
   );
