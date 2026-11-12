@@ -150,14 +150,6 @@ function App() {
               <PauseTapeControls />
             </>
           ) : null}
-          <div style={{ fontSize: 16, opacity: 0.8 }}>
-            {board.playName} vs {board.schemeName}
-          </div>
-          {!board.over && board.side !== "def" && board.profile !== "wings" ? (
-            <div style={{ fontSize: 14, opacity: 0.75 }}>
-              {board.profile === "classic" ? "Blocker: U B K O · Stiff: Tab \\" : "Blocker: U B K O"}
-            </div>
-          ) : null}
           {board.over && !board.paused ? (
             <>
               <div style={{ fontSize: 28, marginTop: 4 }}>{board.title}</div>

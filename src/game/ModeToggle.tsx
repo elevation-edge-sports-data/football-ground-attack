@@ -37,17 +37,18 @@ function optionStyle(on: boolean): CSSProperties {
   };
 }
 
-/** Game | Practice. `embedded` sits in the bottom button row. */
+/** Drill | Practice | Game. Drill follows the game rules. `embedded` sits in the bottom button row. */
 export function ModeToggle({ mode, embedded = false }: { mode: SessionMode; embedded?: boolean }) {
   return (
     <div role="group" aria-label="Mode" style={embedded ? group : dock}>
-      <ModeButton mode="game" current={mode} label="GAME" />
+      <ModeButton mode="drill" current={mode} label="DRILL" />
       <ModeButton mode="practice" current={mode} label="PRACTICE" />
+      <ModeButton mode="game" current={mode} label="GAME" />
     </div>
   );
 }
 
-/** Offense | Defense. Same chrome as Game | Practice. Offense is the default. */
+/** Offense | Defense. Same chrome as the mode control. Offense is the default. */
 export function PlaySideButton({ side }: { side: "off" | "def" }) {
   return (
     <div role="group" aria-label="Play as" style={group}>

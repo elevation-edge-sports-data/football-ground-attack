@@ -12,16 +12,28 @@ import {
 } from "./fieldLook";
 import { ModeToggle, PlaySideButton } from "./ModeToggle";
 import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
+import {
+  readTuning,
+  setBreakBlock,
+  setBreakTackle,
+  setCpuStrength,
+  setMateStrength,
+  setSpeed,
+  setYouStrength,
+  SLIDER_MAX,
+  SLIDER_MIN,
+  SLIDER_STEP,
+  subscribeTuning,
+} from "./sim/tuning";
 import { beginTape, readTapeOn, readTapeReady, stopTape, subscribeTape, subscribeTapeReady } from "./tapeReplay";
 
-type MenuId = "camera" | "field" | "controller";
+type MenuId = "camera" | "field" | "controller" | "settings";
 type FieldPanel = "surface" | "ezart";
 
 const dock: CSSProperties = {
   position: "fixed",
-  left: "50%",
+  left: 12,
   zIndex: 24,
-  transform: "translateX(-50%)",
   pointerEvents: "none",
 };
 
@@ -75,7 +87,7 @@ const popRow = (anchor: "start" | "end" | "center"): CSSProperties => ({
   ...(anchor === "start" ? { left: 0 } : anchor === "end" ? { right: 0 } : { left: "50%", transform: "translateX(-50%)" }),
 });
 
-/** Hockey-style bottom menu. One open row sits above CAMERA, FIELD, or CONTROLLER. */
+/** Hockey-style bottom menu. One open row sits above CAMERA, FIELD, CONTROLLER, or SETTINGS. */
 export function BottomMenus() {
   const [menu, setMenu] = useState<MenuId | null>(null);
   const [fieldPanel, setFieldPanel] = useState<FieldPanel | null>(null);
@@ -113,9 +125,10 @@ export function BottomMenus() {
   return (
     <div style={{ ...dock, bottom: tape || board.replay ? 112 : 16 }}>
       <div style={stack}>
+        {menu === "settings" ? <SettingsPanel /> : null}
         <div style={row}>
           <ModeToggle mode={board.mode} embedded />
-          <PlaySideButton side={board.side} />
+          {board.mode === "game" ? null : <PlaySideButton side={board.side} />}
           <button
             type="button"
             style={choiceStyle(replayOn, replayReady)}
@@ -221,9 +234,134 @@ export function BottomMenus() {
               Controller
             </button>
           </div>
+          <button
+            type="button"
+            style={choiceStyle(menu === "settings")}
+            aria-expanded={menu === "settings"}
+            onMouseDown={holdFocus}
+            onClick={() => toggle("settings")}
+          >
+            Settings
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+const settingsPanel: CSSProperties = {
+  width: "min(600px, calc(100vw - 24px))",
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 12,
+  alignItems: "start",
+  boxSizing: "border-box",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #243040",
+  background: "rgba(23, 30, 40, 0.96)",
+};
+
+const tuneCol: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  minWidth: 0,
+};
+
+const tuneRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 7.2rem) minmax(72px, 1fr) 2.8rem",
+  gap: 6,
+  alignItems: "center",
+  minWidth: 0,
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#8b9688",
+  whiteSpace: "nowrap",
+};
+
+const tuneValue: CSSProperties = {
+  color: "#e8ece6",
+  fontVariantNumeric: "tabular-nums",
+  textAlign: "right",
+};
+
+const tuneInput: CSSProperties = {
+  width: "100%",
+  height: 18,
+  margin: 0,
+  accentColor: "#e8ece6",
+  cursor: "pointer",
+};
+
+function SettingsPanel() {
+  const tune = useSyncExternalStore(subscribeTuning, readTuning);
+  return (
+    <div role="group" aria-label="Settings" style={settingsPanel}>
+      <div style={tuneCol}>
+        <TuneSlider
+          label="You"
+          title="Runner when you play offense; controlled defender when you play defense."
+          value={tune.you}
+          suffix="×"
+          onChange={setYouStrength}
+        />
+        <TuneSlider
+          label="Teammates"
+          title="Your OL and skill players, or your other defenders."
+          value={tune.mates}
+          suffix="×"
+          onChange={setMateStrength}
+        />
+        <TuneSlider
+          label="CPU"
+          title="The other side: CPU pursuit on offense, CPU line and runner on defense."
+          value={tune.cpu}
+          suffix="×"
+          onChange={setCpuStrength}
+        />
+      </div>
+      <div style={tuneCol}>
+        <TuneSlider label="Speed" value={tune.speed} suffix="×" onChange={setSpeed} />
+        <TuneSlider label="Break block" value={tune.breakBlock} suffix="" onChange={setBreakBlock} />
+        <TuneSlider label="Break tackle" value={tune.breakTackle} suffix="" onChange={setBreakTackle} />
+      </div>
+    </div>
+  );
+}
+
+function TuneSlider({
+  label,
+  title,
+  value,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  title?: string;
+  value: number;
+  suffix: string;
+  onChange: (labeled: number) => void;
+}) {
+  return (
+    <label title={title} style={tuneRow}>
+      <span>{label}</span>
+      <input
+        type="range"
+        min={SLIDER_MIN}
+        max={SLIDER_MAX}
+        step={SLIDER_STEP}
+        value={value}
+        aria-label={label}
+        style={tuneInput}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <b style={tuneValue}>{value.toFixed(2)}{suffix}</b>
+    </label>
   );
 }
 

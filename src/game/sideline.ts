@@ -1,5 +1,6 @@
 import { Vector3, type Mesh, type Object3D } from "three";
-import { FIELD, SOUTH_BACK } from "../field/spec";
+import { FIELD, NORTH_BACK, SOUTH_BACK } from "../field/spec";
+import { readAttackNorth } from "./sim/attack";
 
 /**
  * A body corner at or below this height is on the ground.
@@ -50,11 +51,15 @@ export function runnerBounds(root: Object3D, width = FIELD.width): RunnerBounds 
           _point.set(x, y, z).applyMatrix4(mesh.matrixWorld);
           if (_point.y > GROUND_CONTACT_Y) continue;
           const yard = -_point.z;
+          const ownBack = readAttackNorth() ? yard <= SOUTH_BACK : yard >= NORTH_BACK;
+          const inOwnEnd = readAttackNorth()
+            ? yard < 0 && yard > SOUTH_BACK
+            : yard > FIELD.length && yard < NORTH_BACK;
           if (_point.x <= 0 || _point.x >= width) {
             bounds.sideline = true;
-            if (yard < 0 && yard > SOUTH_BACK) bounds.ownEndSideline = true;
+            if (inOwnEnd) bounds.ownEndSideline = true;
           }
-          if (yard <= SOUTH_BACK) bounds.ownBack = true;
+          if (ownBack) bounds.ownBack = true;
           if (bounds.sideline && bounds.ownBack && bounds.ownEndSideline) return;
         }
       }

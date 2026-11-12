@@ -19,7 +19,7 @@ function unlockSegments(geometry: TrailGeometry) {
   geometry._maxInstanceCount = cap !== undefined && Number.isFinite(cap) ? Math.max(cap, segments) : segments;
 }
 
-/** Just above the LOS bar (center 0.06, height 0.035) so the path stays continuous. */
+/** Just above the LOS bar (center 0.072, height 0.035) so the path stays continuous. */
 const TRAIL_Y = 0.09;
 /** `scratch` holds 610 points: 600 samples plus the live tip. */
 const MAX_SEGMENTS = 609;

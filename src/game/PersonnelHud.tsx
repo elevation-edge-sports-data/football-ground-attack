@@ -38,13 +38,29 @@ const panelStyle: CSSProperties = {
   letterSpacing: "0.04em",
 };
 
-const titleStyle: CSSProperties = {
+const titleRowStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 8,
   marginBottom: 4,
-  fontSize: 11,
-  fontWeight: 600,
+};
+
+const titleStyle: CSSProperties = {
+  flex: "0 0 auto",
+  fontSize: 15,
+  fontWeight: 700,
   letterSpacing: "0.06em",
   textTransform: "uppercase",
   color: "#8b9688",
+};
+
+const callStyle: CSSProperties = {
+  fontSize: 15,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#e8ece6",
+  whiteSpace: "nowrap",
 };
 
 const rowStyle: CSSProperties = {
@@ -123,18 +139,23 @@ function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: Person
 
 function Panel({
   title,
+  call,
   groups,
   counts,
   steps,
 }: {
   title: string;
+  call: string;
   groups: readonly PersonnelKey[];
   counts: PersonnelCounts;
   steps: boolean;
 }) {
   return (
     <div style={panelStyle}>
-      <div style={titleStyle}>{title}</div>
+      <div style={titleRowStyle}>
+        <span style={titleStyle}>{title}</span>
+        <span style={callStyle}>{call}</span>
+      </div>
       {groups.map((group) => (
         <Stepper key={group} group={group} counts={counts} steps={steps} />
       ))}
@@ -150,8 +171,8 @@ export function PersonnelHud() {
   const steps = !board.replay && !tape;
   return (
     <div aria-label="Personnel" style={stripStyle}>
-      <Panel title="Offense" groups={OFFENSE_PERSONNEL} counts={counts} steps={steps} />
-      <Panel title="Defense" groups={DEFENSE_PERSONNEL} counts={counts} steps={steps} />
+      <Panel title="Offense" call={board.playName} groups={OFFENSE_PERSONNEL} counts={counts} steps={steps} />
+      <Panel title="Defense" call={board.schemeName} groups={DEFENSE_PERSONNEL} counts={counts} steps={steps} />
     </div>
   );
 }

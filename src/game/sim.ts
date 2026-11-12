@@ -24,6 +24,7 @@ import {
   type ScriptAction,
   type StrideType,
 } from "./carrierPose";
+import { carrierTravelScale } from "./sim/tuning";
 
 /** Yards per second while carrying. A few seconds of input crosses the formation. */
 const SPEED = 8.5;
@@ -903,10 +904,12 @@ export function step(sim: Sim, input: Input, dt: number) {
       mag = 1;
     }
     const inDivePoses = poseAction === "dive" && sim.burstTime < DIVE_SLOW_AT;
+    // You or CPU strength, times the v10 speed scale. Scripted burst distances stay put.
+    const pace = carrierTravelScale();
     const speed =
-      sim.diveRecover > 0 && !inDivePoses
+      (sim.diveRecover > 0 && !inDivePoses
         ? SPEED * diveGetUpFactor(sim.diveRecover)
-        : SPEED * (poseAction === "sprint" ? SPRINT_MULT : 1);
+        : SPEED * (poseAction === "sprint" ? SPRINT_MULT : 1)) * pace;
     let moveX = 0;
     let moveY = 0;
     const slide = jukeEnded ?? (poseAction === "jukeL" || poseAction === "jukeR" ? poseAction : null);
@@ -1036,8 +1039,8 @@ export function step(sim: Sim, input: Input, dt: number) {
         spendHurdleGap(vx, vy, tail, tailMoved);
       }
     } else if (freeDt > 0 && poseAction === "dive") {
-      const diveRun = SPEED;
-      const diveSlow = sim.diveRecover > 0 ? SPEED * diveGetUpFactor(sim.diveRecover) : SPEED;
+      const diveRun = SPEED * pace;
+      const diveSlow = (sim.diveRecover > 0 ? SPEED * diveGetUpFactor(sim.diveRecover) : SPEED) * pace;
       const t0 = sim.burstTime - freeDt;
       const marks = [DIVE_LOCK_AT, DIVE_SLOW_AT].filter((t) => t > t0 && t < sim.burstTime);
       const points = [t0, ...marks, sim.burstTime];

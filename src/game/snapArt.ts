@@ -1,4 +1,5 @@
 import { FIELD, clamp } from "../field/spec";
+import { readAttackNorth } from "./sim/attack";
 import type { AssignedPlay } from "./sim/assign";
 import type { BlockAssignment, DefenseAssignment, DefenseJob, RouteStep } from "./sim/types";
 
@@ -169,7 +170,7 @@ function routePoints(origin: FieldPoint, steps: readonly RouteStep[]): FieldPoin
   let yard = origin.yard;
   for (const step of steps) {
     x += (step.dx || 0) * STEP_X;
-    yard += (step.dy || 0) * STEP_Y;
+    yard += (step.dy || 0) * STEP_Y * (readAttackNorth() ? 1 : -1);
     points.push({ x, yard });
   }
   return points;
@@ -183,12 +184,12 @@ function diagramPoints(origin: FieldPoint, steps: readonly RouteStep[], arrow: r
     let yard = origin.yard;
     for (const dx of arrow) {
       x += dx * 6;
-      yard += 5;
+      yard += readAttackNorth() ? 5 : -5;
       points.push({ x, yard });
     }
     return points;
   }
-  return [origin, { x: origin.x, yard: origin.yard + 7 }];
+  return [origin, { x: origin.x, yard: origin.yard + (readAttackNorth() ? 7 : -7) }];
 }
 
 function blockPoints(playerX: number, playerY: number, block: BlockAssignment, target: { x: number; yard: number } | null, los: number): FieldPoint[] {
@@ -204,7 +205,7 @@ function blockPoints(playerX: number, playerY: number, block: BlockAssignment, t
   }
   if (!segs.length) {
     const depth = Math.min(3.2, block.levelY || 2.5);
-    segs.push(shortAim(playerX, playerY, playerX + block.driveSide * 1.2, los + depth, 2.6));
+    segs.push(shortAim(playerX, playerY, playerX + block.driveSide * 1.2, los + depth * (readAttackNorth() ? 1 : -1), 2.6));
   }
   return [{ x: playerX, yard: playerY }, ...segs];
 }

@@ -1,3 +1,5 @@
+import { readPrefs, writePrefs } from "./prefs";
+
 /** Named kit 1 through kit 9. User kit numbers are 1-based over these ids. */
 export type Uniform = {
   id: number;
@@ -104,15 +106,32 @@ export function gloveColor(kit: Uniform) {
 
 type Selection = { offId: number; defId: number };
 
-/** Home stays on kit 1. Away draws any other kit, so the sides never match at load. */
-function awayKitOnLoad(homeId: number): number {
-  const open = UNIFORMS.filter((kit) => kit.id !== homeId);
-  const pick = open[Math.floor(Math.random() * open.length)];
-  return pick?.id ?? (homeId === 0 ? 1 : 0);
+/** Any kit except `except`, so the two sides never share a uniform. */
+function rollKit(except?: number): number {
+  const open = UNIFORMS.filter((kit) => kit.id !== except);
+  const pool = open.length > 0 ? open : UNIFORMS;
+  return pool[Math.floor(Math.random() * pool.length)]?.id ?? 0;
 }
 
-const HOME_KIT = 0;
-let selection: Selection = { offId: HOME_KIT, defId: awayKitOnLoad(HOME_KIT) };
+function savedKit(id: unknown): number | null {
+  if (typeof id !== "number" || !Number.isInteger(id)) return null;
+  return UNIFORMS.some((kit) => kit.id === id) ? id : null;
+}
+
+/** Fresh load rolls both kits. A saved pair replaces that roll when the sides differ. */
+function openingKits(): Selection {
+  const rolled: Selection = { offId: rollKit(), defId: 0 };
+  rolled.defId = rollKit(rolled.offId);
+  const saved = readPrefs().kits;
+  const offId = savedKit(saved?.offId);
+  const defId = savedKit(saved?.defId);
+  if (offId != null && defId != null && offId !== defId) return { offId, defId };
+  if (offId != null) return { offId, defId: rollKit(offId) };
+  if (defId != null) return { offId: rollKit(defId), defId };
+  return rolled;
+}
+
+let selection: Selection = openingKits();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -132,14 +151,20 @@ export function getUniformSelection() {
  * A free kit stays on the other side. A kit the other side already wears
  * is swapped, so the two sides never match.
  */
+function rememberKits() {
+  writePrefs({ kits: { offId: selection.offId, defId: selection.defId } });
+}
+
 export function selectOffenseKit(id: number) {
   const defId = selection.defId === id ? selection.offId : selection.defId;
   selection = { offId: id, defId };
+  rememberKits();
   emit();
 }
 
 export function selectDefenseKit(id: number) {
   const offId = selection.offId === id ? selection.defId : selection.offId;
   selection = { offId, defId: id };
+  rememberKits();
   emit();
 }

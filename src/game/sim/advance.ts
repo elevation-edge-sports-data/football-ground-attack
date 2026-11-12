@@ -21,7 +21,9 @@ import { step, type Input, type Player, type Sim } from "../sim";
 import type { PlayInput } from "./types";
 import type { AssignedPlay, AssignedPlayer, ReplayFrame } from "./assign";
 import { contactOf, resolveBlockContact, resolveTackle, tickContact } from "./contact";
-import { readUserDefenderId, tickDefenseLive, userTackleScale, type DefenseStick } from "./defense";
+import { bodyTravelScale, setUserOnOffense } from "./tuning";
+import { attackSign, downfieldDelta, furtherDownfield, shiftDownfield } from "./attack";
+import { consumeDefenseFinish, readUserDefenderId, tickDefenseLive, userTackleScale, type DefenseStick } from "./defense";
 import { flushStanceReleases, releaseStance } from "./stance";
 import type { BlockAssignment, ContactResult, DefenseAssignment, PlayAssignment, RouteAssignment } from "./types";
 
@@ -81,7 +83,7 @@ function desiredCarrierInput(assigned: AssignedPlay, input: Input, dt: number): 
     const beat = route.steps[route.index];
     if (beat) {
       x = beat.dx;
-      yard = beat.dy;
+      yard = beat.dy * attackSign();
       route.timer += dt;
       const stick = Math.abs(input.x) > ROUTE_LEAVE || Math.abs(input.yard) > ROUTE_LEAVE;
       const locked = route.index === 0 && route.lockFirst;
@@ -112,7 +114,7 @@ function blockAim(
     const via = block.pullVia;
     if (block.pullPhase === 0) {
       const dist = Math.hypot(owner.x - via.x, owner.yard - via.y);
-      if (owner.yard <= los - 0.6 || dist < 1.1) block.pullPhase = 1;
+      if (downfieldDelta(los, owner.yard) >= 0.6 || dist < 1.1) block.pullPhase = 1;
       return { x: via.x, yard: via.y };
     }
     if (Math.abs(owner.x - via.x2) < 1.4) block.pullPhase = 2;
@@ -120,12 +122,15 @@ function blockAim(
   }
   const target = block.targetId ? players.find((player) => player.id === block.targetId) : undefined;
   if (target) {
-    if (block.mode === "reach") return { x: target.x + side * 1.15, yard: target.yard + 0.12 };
-    if (block.mode === "climb") return { x: target.x + side * 0.9, yard: target.yard + 0.25 };
-    return { x: target.x + side * 0.9, yard: target.yard + 0.35 };
+    if (block.mode === "reach") return { x: target.x + side * 1.15, yard: shiftDownfield(target.yard, 0.12) };
+    if (block.mode === "climb") return { x: target.x + side * 0.9, yard: shiftDownfield(target.yard, 0.25) };
+    return { x: target.x + side * 0.9, yard: shiftDownfield(target.yard, 0.35) };
   }
   if (block.gapAimX != null && block.gapAimY != null) return { x: block.gapAimX, yard: block.gapAimY };
-  return { x: carrier.x + side * 2.2, yard: Math.max(los + block.levelY, carrier.yard + 1) };
+  return {
+    x: carrier.x + side * 2.2,
+    yard: furtherDownfield(shiftDownfield(los, block.levelY), shiftDownfield(carrier.yard, 1)),
+  };
 }
 
 /** Yards at which a job gives up the landmark. Deep holds longer. Blitz waits until the runner is on him. */
@@ -157,12 +162,12 @@ function aimFor(player: AssignedPlayer, players: readonly Player[], carrier: Pla
   if (isDefense(assignment)) {
     const gap = Math.hypot(player.x - carrier.x, player.yard - carrier.yard);
     const pastAt = style === "storm" ? 1.4 : style === "base" ? 3.6 : 2.4;
-    const past = carrier.yard > assignment.yard + pastAt;
+    const past = downfieldDelta(carrier.yard, assignment.yard) > pastAt;
     const delay = style === "storm" ? assignment.blitzDelay * 0.45 : assignment.blitzDelay;
     if ((assignment.job === "blitz" || assignment.job === "man") && delay > 0 && age < delay && gap >= 3.2) {
       return {
         x: player.x + (assignment.x - player.x) * 0.08,
-        yard: player.yard + 0.15,
+        yard: shiftDownfield(player.yard, 0.15),
       };
     }
     if (ZONE_JOBS.has(assignment.job) && gap >= 3.2 && !past) {
@@ -174,7 +179,11 @@ function aimFor(player: AssignedPlayer, players: readonly Player[], carrier: Pla
       const ry = Math.max(0.8, assignment.zoneRy * 1.15 * breath * span);
       return {
         x: clamp(carrier.x, assignment.x - rx, assignment.x + rx),
-        yard: clamp(carrier.yard + 0.8, assignment.yard - ry, assignment.yard + 2.2),
+        yard: clamp(
+          shiftDownfield(carrier.yard, 0.8),
+          Math.min(shiftDownfield(assignment.yard, -ry), shiftDownfield(assignment.yard, 2.2)),
+          Math.max(shiftDownfield(assignment.yard, -ry), shiftDownfield(assignment.yard, 2.2)),
+        ),
       };
     }
     const reach = keyDistance(assignment) * (style === "storm" ? 1.45 : style === "base" ? 0.68 : 1);
@@ -212,7 +221,7 @@ function claimSecondLevel(
   los: number,
 ) {
   const aimX = snap + block.sealSide * 6.5;
-  const aimY = los + block.levelY;
+  const aimY = shiftDownfield(los, block.levelY);
   block.gapAimX = aimX;
   block.gapAimY = aimY;
   let best: AssignedPlayer | null = null;
@@ -221,7 +230,7 @@ function claimSecondLevel(
     if (claimed.has(defender.id)) continue;
     const clock = contactOf(defender);
     if (clock.pancake > 0 || clock.recover > 0) continue;
-    if (defender.role === "DT" && defender.yard < los + 1.5) continue;
+    if (defender.role === "DT" && downfieldDelta(defender.yard, los) < 1.5) continue;
     const score = Math.hypot(defender.x - aimX, defender.yard - aimY);
     const bias = defender.role === "LB" ? 0.75 : defender.role === "DB" ? 0.9 : 1;
     if (score * bias < bestDist) {
@@ -248,8 +257,8 @@ function retargetBlockers(players: readonly AssignedPlayer[], carrier: Player, s
     if (!isBlock(block)) continue;
     const target = block.targetId ? defenders.find((player) => player.id === block.targetId) : undefined;
     if (target && !block.backsideSeal) {
-      const beaten = target.yard < carrier.yard - 1.8 && dist(target, carrier) + 0.4 < dist(blocker, carrier);
-      const stale = carrier.yard - target.yard > 6.2;
+      const beaten = downfieldDelta(carrier.yard, target.yard) > 1.8 && dist(target, carrier) + 0.4 < dist(blocker, carrier);
+      const stale = downfieldDelta(carrier.yard, target.yard) > 6.2;
       const clock = contactOf(target);
       const holdDone = clock.pushYards > 0 && clock.engage <= 0 && clock.pancake <= 0 && clock.recover <= 0;
       if (beaten || stale || holdDone || clock.pancake > 0 || clock.recover > 0) {
@@ -273,7 +282,7 @@ function retargetBlockers(players: readonly AssignedPlayer[], carrier: Player, s
       if (claimed.has(defender.id)) continue;
       const clock = contactOf(defender);
       if (clock.pancake > 0 || clock.recover > 0) continue;
-      if (defender.yard < carrier.yard - 1.6) continue;
+      if (downfieldDelta(carrier.yard, defender.yard) > 1.6) continue;
       if (block.backsideSeal && (defender.x - snap) * block.sealSide < 1.1) continue;
       if (!block.backsideSeal) {
         const sameLane = Math.abs(defender.x - blocker.x) < 3.6;
@@ -348,6 +357,57 @@ function copyPose(from: Player, to: Player) {
   to.facingX = from.facingX;
   to.facingYard = from.facingYard;
   to.hop = from.hop;
+}
+
+/** Spots to put back so a dead-ball shove cannot drag a frozen player. */
+function holdPlaces(players: readonly Player[], exceptId: string | null) {
+  return players
+    .filter((player) => player.id !== exceptId)
+    .map((player) => ({ player, x: player.x, yard: player.yard }));
+}
+
+function restorePlaces(held: { player: Player; x: number; yard: number }[]) {
+  for (const row of held) {
+    row.player.x = row.x;
+    row.player.yard = row.yard;
+  }
+}
+
+/**
+ * Whistle is already blown. AI and teammates stay where they are.
+ * Offense still steps the ball carrier. Defense still steps the user defender.
+ */
+function stepUserAfterWhistle(
+  sim: Sim,
+  assigned: AssignedPlay,
+  input: Input & Partial<PlayInput> & { defense?: DefenseStick | null },
+  dt: number,
+): Input {
+  const bounded = dt > 0 ? Math.min(dt, 0.05) : 0;
+  assigned.age += bounded;
+  const playingDef = input.defense != null;
+  const carrier = assigned.players.find((player) => player.controlled) ?? null;
+  syncById(assigned.players, sim.players);
+  if (playingDef) {
+    const userId = readUserDefenderId();
+    const held = holdPlaces(sim.players, userId);
+    if (carrier && input.defense && bounded > 0) {
+      tickDefenseLive(assigned.players, carrier, input.defense, bounded, sim.los);
+      syncById(assigned.players, sim.players);
+      // A dead-ball hit must not rename the next whistle.
+      consumeDefenseFinish();
+    }
+    restorePlaces(held);
+    setUserOnOffense(false);
+  } else {
+    const held = holdPlaces(sim.players, carrier?.id ?? null);
+    setUserOnOffense(true);
+    step(sim, input, dt);
+    restorePlaces(held);
+  }
+  syncById(sim.players, assigned.players);
+  flushStanceReleases();
+  return input;
 }
 
 function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
@@ -428,9 +488,9 @@ function cpuCarry(assigned: AssignedPlay, aimed: Input): Input {
   const found = carrierRoute(assigned);
   if (found && found.route.index < found.route.steps.length) return { ...aimed, action: "carry", sprint: false };
   const carrier = found?.player ?? assigned.players.find((player) => player.controlled);
-  if (!carrier) return { x: 0, yard: 1, action: "carry", sprint: false };
+  if (!carrier) return { x: 0, yard: attackSign(), action: "carry", sprint: false };
   let x = 0.15;
-  let yard = 1;
+  let yard = attackSign();
   let nearest = Infinity;
   let nearestX = carrier.x;
   for (const player of assigned.players) {
@@ -471,8 +531,9 @@ export function stepAssignments(
 ): Input {
   // Armed formation. Poses are already on the roster. Movement, the carrier
   // pose clock, and stance release wait until the user snaps.
-  // A whistle does not stop this. Bodies keep moving until the next lineup replaces them.
+  // After the whistle only the user keeps moving. Everyone else stays put until the lineup.
   if (!assigned.snapped) return input;
+  if (sim.playOver) return stepUserAfterWhistle(sim, assigned, input, dt);
   const wasOver = sim.playOver;
   const bounded = dt > 0 ? Math.min(dt, 0.05) : 0;
   assigned.age += bounded;
@@ -504,6 +565,7 @@ export function stepAssignments(
       let scale = clock.recover > 0 ? 0.35 : clock.slowed > 0 ? 0.55 : 1;
       if (player.team === "def" && style === "storm") scale *= 1.18;
       if (player.team === "def" && style === "base") scale *= 0.88;
+      scale *= bodyTravelScale(player.team, playingDef, false);
       const steered = player === steeredLeft || player === steeredRight;
       const separateStick = input.steerMode === "independent" || input.steerMode === "classic";
       const stickX = separateStick ? (input.blockerX ?? 0) : input.x;
@@ -547,7 +609,7 @@ export function stepAssignments(
         continue;
       }
       // A whiff, a near miss, and a thrown check leave the play running.
-      // A tackle whistles, but it does not stop the bodies. The lineup cut does that.
+      // A tackle whistles. Later frames freeze everyone but the user.
       if (tackle?.outcome !== "tackled") continue;
       if (!sim.playOver) {
         sim.playOver = true;
@@ -574,7 +636,9 @@ export function stepAssignments(
     }
   }
   syncById(assigned.players, sim.players);
-  step(sim, desired, dt);
+  setUserOnOffense(!playingDef);
+  // Defense whistle: the user defender already moved. Do not run the CPU carrier.
+  if (!(sim.playOver && playingDef)) step(sim, desired, dt);
   syncById(sim.players, assigned.players);
   if (!wasOver) recordReplay(sim, assigned, bounded, sim.playOver);
   flushStanceReleases();

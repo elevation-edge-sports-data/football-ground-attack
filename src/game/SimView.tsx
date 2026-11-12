@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useSyncExternalStore } from "react";
 import { DoubleSide, Raycaster, Vector2, Vector3, type Camera, type Group, type Mesh, type Object3D } from "three";
-import { FIELD, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, SOUTH_BACK } from "../field/spec";
+import { FIELD, NORTH_BACK, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, SOUTH_BACK } from "../field/spec";
+import { readAttackNorth } from "./sim/attack";
 import { followTarget, setFollowTarget } from "./cameraFollow";
 import { footballLeadingTip } from "./ballTip";
 import { worldFromField, yawFromFacing } from "./frame";
@@ -46,10 +47,11 @@ import { replayFocus, replayFocusJump } from "./replayCamera";
 import { sampleReplay, stepAssignments } from "./sim/advance";
 import { stanceOf, stanceRevision, subscribeStances } from "./sim/stance";
 import { randomizeFieldForNewGame } from "./fieldLook";
-import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
+import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPendingFirstDownYard, readPendingLos, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
 import { beginDefenseHuddle, beginDefenseLive, readUserDefenderId, readUserDefPose, tickDefenseHuddle, type DefenseStick } from "./sim/defense";
 import { runnerBounds } from "./sideline";
 import { controlledPlayer, createSim, step, type Player, type Sim } from "./sim";
+import { setUserOnOffense } from "./sim/tuning";
 import type { AssignedPlay } from "./sim/assign";
 import { PLAYER_NUMBERS, getUniformSelection, kitById, subscribeUniforms } from "./uniforms";
 
@@ -80,7 +82,20 @@ const _ndc = new Vector2();
 const _ray = new Raycaster();
 const EDIT_SPEED = 4;
 /** Dead-ball wait before the next formation lines up. Snap still takes its own press. */
-const LINEUP_DELAY = 1.25;
+const LINEUP_DELAY = 0.5;
+
+function crossedAttackGoal(yard: number) {
+  return readAttackNorth() ? yard >= FIELD.length : yard <= 0;
+}
+
+function inOwnEnd(yard: number) {
+  return readAttackNorth() ? yard <= SOUTH_BACK : yard >= NORTH_BACK;
+}
+/**
+ * Chain bars sit above the midfield logo (y 0.05, depth bias -4) and under the runner trail (y 0.09).
+ * The box is 0.035 tall, so the center stays below 0.0725.
+ */
+const CHAIN_Y = 0.072;
 /** A short click. A longer drag stays an orbit. */
 const REPLAY_CLICK = 6;
 
@@ -219,7 +234,7 @@ function defenseStick(keys: ReadonlySet<string>, camera: Camera): DefenseStick {
     x: move.x,
     yard: move.yard,
     sprint: raw.sprint,
-    switchOn: raw.switchOn,
+    changeOn: raw.changeOn,
     dive: raw.dive,
     shed: raw.shed,
     wrap: raw.wrap,
@@ -231,9 +246,9 @@ function defenseStick(keys: ReadonlySet<string>, camera: Camera): DefenseStick {
     dpadY: dpad.yard,
     cyclePrev: raw.cyclePrev,
     cycleNext: raw.cycleNext,
-    snapY: raw.snapY,
     snapEnter: raw.snapEnter,
     padA: raw.padA,
+    blockSnap: false,
     aimCarrier: raw.aimCarrier,
   };
 }
@@ -260,6 +275,7 @@ function PlayerMesh({
   pose,
   carry,
   mark,
+  homeOnDefense,
 }: {
   player: Player;
   bodies: Map<string, Group>;
@@ -267,7 +283,10 @@ function PlayerMesh({
   pose?: string;
   carry?: boolean;
   mark?: boolean;
+  /** GAME only. The user stays the home kit while the away squad has the ball. */
+  homeOnDefense?: boolean;
 }) {
+  const homeSquad = homeOnDefense ? player.team === "def" : player.team === "off";
   return (
     <group
       ref={(node) => {
@@ -280,7 +299,7 @@ function PlayerMesh({
       rotation={[0, yawFromFacing(player.facingX, player.facingYard), 0]}
     >
       <PlayerFigure
-        kit={kitById(player.team === "off" ? kits.offId : kits.defId)}
+        kit={kitById(homeSquad ? kits.offId : kits.defId)}
         number={jerseyNumber(player)}
         controlled={player.controlled}
         pose={pose}
@@ -408,7 +427,7 @@ export function SimView() {
     replay.current.on = false;
     setReplayMode(false);
     randomizeFieldForNewGame();
-    const next = bootFullPlay();
+    const next = bootFullPlay(true);
     mountPlay(next);
     console.log("New game", {
       play: next.assigned.play.name,
@@ -702,8 +721,10 @@ export function SimView() {
       padAEdge && readPaused() && !readTapeOn() && !replay.current.on && !sim.current.playOver;
     if (resumeOnA) setPaused(false);
     // Practice re-spot: A confirms the X. That press does not also snap or start the next play.
+    let spotConfirmed = false;
     if (padAEdge && !resumeOnA && practiceSpotAiming()) {
       confirmPracticeRespot();
+      spotConfirmed = true;
     } else if (padAEdge && !resumeOnA && sim.current.playOver && !replay.current.on) {
       if (gameEnded()) restartGame.current();
       else goNext.current();
@@ -711,6 +732,38 @@ export function SimView() {
 
     const state = sim.current;
     const play = assigned.current;
+    // Both chains jump to the spotted yard as soon as the whistle is settled.
+    // Replay and tape keep this play's snap lines. A dead clock or a turnover does too.
+    const placeLosLine = () => {
+      let yard = state.los;
+      let firstYard = readFirstDownYard(state.los);
+      const watching = readTapeOn() || replay.current.on;
+      if (
+        !watching &&
+        !preview.current &&
+        readMode() !== "practice" &&
+        state.playOver &&
+        !clockExpired() &&
+        !seriesEnded()
+      ) {
+        const next = readPendingLos();
+        if (next != null) {
+          yard = next;
+          firstYard = readPendingFirstDownYard();
+        }
+      }
+      if (losLine.current) {
+        const [x, y, z] = worldFromField(FIELD.width / 2, yard, CHAIN_Y);
+        losLine.current.position.set(x, y, z);
+      }
+      if (firstDownLine.current) {
+        firstDownLine.current.visible = firstYard != null;
+        if (firstYard != null) {
+          const [x, y, z] = worldFromField(FIELD.width / 2, firstYard, CHAIN_Y);
+          firstDownLine.current.position.set(x, y, z);
+        }
+      }
+    };
     const hasFootage = !preview.current && (play?.replay.frames.length ?? 0) > 0;
     if (hasFootage !== footageOn.current) {
       footageOn.current = hasFootage;
@@ -718,12 +771,12 @@ export function SimView() {
     }
     const overAtStart = state.playOver;
     const queueWhistle = (ballSpot: boolean, safety = false) => {
-      if (preview.current || readMode() !== "game") {
+      if (preview.current || readMode() === "practice") {
         markPlayOver(state, ballSpot, undefined, safety);
         return;
       }
       const carrier = controlledPlayer(state);
-      if ((carrier?.yard ?? 0) >= FIELD.length) {
+      if (crossedAttackGoal(carrier?.yard ?? 0)) {
         markPlayOver(state, ballSpot);
         return;
       }
@@ -741,7 +794,7 @@ export function SimView() {
     };
     const tryMeasureSpot = () => {
       const pending = pendingSpotMeasure.current;
-      if (!pending || preview.current || readMode() !== "game") return;
+      if (!pending || preview.current || readMode() === "practice") return;
       pending.wait += 1;
       const carrier = controlledPlayer(state);
       const body = carrier ? bodies.current.get(carrier.id) : undefined;
@@ -772,8 +825,8 @@ export function SimView() {
       state.ballX = liveBallX;
       state.ballYard = liveBallYard;
     };
-    // Formation is armed. Offense snaps on Enter or A. Defense cycles on an A tap,
-    // snaps on Y, Enter, or a held A, and shades with the stick.
+    // Formation is armed. Offense snaps on Enter or A. Defense snaps on A or Enter,
+    // changes player on Y, and shades with the stick. X and B only zoom.
     const playingDef = !preview.current && readPlaySide() === "def";
     if (play && playingDef && !play.snapped && !state.playOver && !replay.current.on && !readTapeOn()) {
       if (huddlePlay.current !== play) {
@@ -790,7 +843,9 @@ export function SimView() {
           hold.x = 0;
           hold.yard = 0;
         }
-        if (snapLatch.current || resumeOnA) hold.snapEnter = false;
+        // The lineup press, a pause resume, and a re-spot confirm must not also snap.
+        // The button state is still passed through so the next press is a real edge.
+        hold.blockSnap = snapLatch.current || resumeOnA || practiceSpotAiming() || spotConfirmed;
         if (tickDefenseHuddle(play.players, hold, Math.min(Math.max(dt, 0), 0.05), state.los) === "snap") {
           play.snapped = true;
           beginDefenseLive(play.players);
@@ -931,6 +986,7 @@ export function SimView() {
         scrubLive.current = false;
         clearReplayScrub();
       }
+      placeLosLine();
       return;
     }
     tapeLook.current.open = false;
@@ -1036,6 +1092,7 @@ export function SimView() {
         shuttle,
         locked: false,
       });
+      placeLosLine();
       return;
     }
     if (scrubLive.current) {
@@ -1052,9 +1109,12 @@ export function SimView() {
       input.yard = 0;
     }
     try {
-      if (preview.current || !play) step(state, input, dt);
+      if (preview.current || !play) {
+        setUserOnOffense(!playingDef);
+        step(state, input, dt);
+      }
       else if (!readPaused() && play.snapped) {
-        // The whistle settles the play. Bodies keep moving until the next lineup.
+        // The whistle settles the play. Only the user keeps moving until the next lineup.
         if (!state.playOver) tickClock(Math.min(dt, 0.05));
         if (playingDef) {
           // LT/RT stay wrap and punch. The right stick stays the hit stick. No teammate steer.
@@ -1101,7 +1161,7 @@ export function SimView() {
         }
         noteTape(Math.min(Math.max(dt, 0), 0.05), state);
         const carrier = controlledPlayer(state);
-        if (!state.playOver && carrier && carrier.yard >= FIELD.length) {
+        if (!state.playOver && carrier && crossedAttackGoal(carrier.yard)) {
           state.playOver = true;
           console.log("[playOver] set", {
             reason: "touchdown",
@@ -1109,7 +1169,7 @@ export function SimView() {
             carrier: carrier.id,
           });
         }
-        if (!state.playOver && carrier && carrier.team === "off" && carrier.yard <= SOUTH_BACK) {
+        if (!state.playOver && carrier && carrier.team === "off" && inOwnEnd(carrier.yard)) {
           state.playOver = true;
           console.log("[playOver] set", {
             reason: "own end line",
@@ -1149,14 +1209,14 @@ export function SimView() {
       }
     }
     // Tackle, score, and end-line whistles are flagged during the step. Settle once, on that frame.
-    // Out of bounds already queued above. Bodies keep moving until the lineup cut.
+    // Out of bounds already queued above. Only the user keeps moving until the lineup cut.
     if (!overAtStart && state.playOver && !pendingSpotMeasure.current) {
       const carrier = controlledPlayer(state);
-      const safety = carrier?.team === "off" && (carrier.yard ?? 0) <= SOUTH_BACK && (carrier.yard ?? 0) < FIELD.length;
+      const safety = carrier?.team === "off" && inOwnEnd(carrier.yard ?? 0) && (carrier.yard ?? 0) < NORTH_BACK && (carrier.yard ?? 0) > SOUTH_BACK;
       queueWhistle(false, safety);
     }
     tryMeasureSpot();
-    // Line up the next play 1.25s after the whistle. Enter, N, or A still does it sooner.
+    // Line up the next play 0.5s after the whistle. Enter, N, or A still does it sooner.
     // Pause, replay, tape, and a practice re-spot hold the wait. Snap stays a separate press.
     const lineupReady =
       state.playOver &&
@@ -1225,23 +1285,12 @@ export function SimView() {
       poseShown.current = state.pose;
       setCarrierPose(state.pose);
     }
-    if (losLine.current) {
-      const [x, y, z] = worldFromField(FIELD.width / 2, state.los, 0.06);
-      losLine.current.position.set(x, y, z);
-    }
-    if (firstDownLine.current) {
-      const yard = readFirstDownYard(state.los);
-      firstDownLine.current.visible = yard != null;
-      if (yard != null) {
-        const [x, y, z] = worldFromField(FIELD.width / 2, yard, 0.06);
-        firstDownLine.current.position.set(x, y, z);
-      }
-    }
+    placeLosLine();
     const carrierNow = controlledPlayer(state);
     if (carrierNow && !readPaused() && (preview.current || play?.snapped)) {
       const bounded = Math.min(Math.max(dt, 0), 0.05);
       const age = play ? play.age : (trail.current.clock += bounded);
-      if (!overAtStart && state.playOver && carrierNow.yard >= FIELD.length) {
+      if (!overAtStart && state.playOver && crossedAttackGoal(carrierNow.yard)) {
         sealRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age);
       } else if (!overAtStart && state.playOver) {
         pinRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age);
@@ -1263,15 +1312,16 @@ export function SimView() {
     }
   });
 
-  const [losX, losY, losZ] = worldFromField(FIELD.width / 2, sim.current.los, 0.06);
+  const [losX, losY, losZ] = worldFromField(FIELD.width / 2, sim.current.los, CHAIN_Y);
   const firstYard = readFirstDownYard(sim.current.los);
-  const [fdX, fdY, fdZ] = worldFromField(FIELD.width / 2, firstYard ?? sim.current.los, 0.06);
+  const [fdX, fdY, fdZ] = worldFromField(FIELD.width / 2, firstYard ?? sim.current.los, CHAIN_Y);
   const roster = sim.current.players;
   const armed = !preview.current && assigned.current != null && !assigned.current.snapped;
   // Subscribing is what repaints a stance when it is applied or released.
   void stanceRev;
   void defRev;
   const defenseOn = !preview.current && readPlaySide() === "def";
+  const homeOnDefense = defenseOn && readMode() === "game";
   const userId = defenseOn ? readUserDefenderId() : null;
   const userPose = defenseOn ? readUserDefPose() : null;
 
@@ -1290,13 +1340,13 @@ export function SimView() {
       <ReplayFocusMark />
       <PlayArt modelRef={artState} age={artAge} rosterTick={rosterTick} />
       <group key={rosterTick}>
-        <mesh ref={losLine} position={[losX, losY, losZ]}>
+        <mesh ref={losLine} position={[losX, losY, losZ]} renderOrder={5}>
           <boxGeometry args={[FIELD.width, 0.035, 0.16]} />
-          <meshStandardMaterial color="#3b82f6" />
+          <meshStandardMaterial color="#3b82f6" polygonOffset polygonOffsetFactor={-8} polygonOffsetUnits={-8} />
         </mesh>
-        <mesh ref={firstDownLine} visible={firstYard != null} position={[fdX, fdY, fdZ]}>
+        <mesh ref={firstDownLine} visible={firstYard != null} position={[fdX, fdY, fdZ]} renderOrder={5}>
           <boxGeometry args={[FIELD.width, 0.035, 0.16]} />
-          <meshStandardMaterial color="#fbbf24" />
+          <meshStandardMaterial color="#fbbf24" polygonOffset polygonOffsetFactor={-8} polygonOffsetUnits={-8} />
         </mesh>
         {roster.map((player) => {
           const edited = tapeBodyPose(player.id);
@@ -1311,6 +1361,7 @@ export function SimView() {
               pose={pose}
               carry={edited ? poseCarriesBall(edited) : undefined}
               mark={defenseOn ? false : undefined}
+              homeOnDefense={homeOnDefense}
             />
           );
         })}

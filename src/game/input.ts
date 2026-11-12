@@ -397,14 +397,16 @@ export function isMoveCode(code: string) {
 /**
  * Defense buttons, the same on every profile.
  * Left stick and WASD move. LT/RT are wrap and punch. The right stick is the hit stick.
- * Face buttons stay A sprint, B switch, X dive, Y shed. LB or RB strafes.
+ * Huddle: A snaps, Y changes player. X and B only zoom. Live: A sprints, X dives,
+ * Y sheds a block or changes player when free, LB or RB strafes. B does not change player.
  */
 export type RawDefense = {
   /** Screen axes. +x is screen-right. +y is screen-up. */
   moveX: number;
   moveY: number;
   sprint: boolean;
-  switchOn: boolean;
+  /** Y. Huddle changes player. Live changes player when free, and sheds when blocked. */
+  changeOn: boolean;
   dive: boolean;
   shed: boolean;
   wrap: boolean;
@@ -413,13 +415,13 @@ export type RawDefense = {
   /** Screen axes of the hit stick. +y is stick-up. */
   hitX: number;
   hitY: number;
-  /** D-pad aim for a switch. +y is up. */
+  /** D-pad aim for a player change. +y is up. */
   dpadX: number;
   dpadY: number;
   cyclePrev: boolean;
   cycleNext: boolean;
-  snapY: boolean;
   snapEnter: boolean;
+  /** Gamepad A. Huddle snaps. Live sprint is `sprint`. */
   padA: boolean;
   aimCarrier: boolean;
 };
@@ -451,7 +453,7 @@ export function readRawDefense(keys: ReadonlySet<string>): RawDefense {
     moveX,
     moveY,
     sprint: keys.has("Space") || !!pad?.sprint,
-    switchOn: keys.has("KeyF") || !!pad?.spin,
+    changeOn: keys.has("KeyY") || !!pad?.truck,
     dive: keys.has("KeyC") || !!pad?.dive,
     shed: keys.has("KeyV") || keys.has("KeyY") || !!pad?.truck,
     wrap: keys.has("KeyQ") || !!pad?.stiffL,
@@ -463,7 +465,6 @@ export function readRawDefense(keys: ReadonlySet<string>): RawDefense {
     dpadY: pad ? (pad.up ? 1 : 0) - (pad.down ? 1 : 0) : 0,
     cyclePrev: keys.has("BracketLeft") || keys.has("Comma"),
     cycleNext: keys.has("BracketRight") || keys.has("Period"),
-    snapY: keys.has("KeyY") || !!pad?.truck,
     snapEnter: keys.has("Enter") || keys.has("NumpadEnter"),
     padA: !!pad?.sprint,
     aimCarrier: keys.has("KeyT"),

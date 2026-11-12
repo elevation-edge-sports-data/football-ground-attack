@@ -10,11 +10,7 @@
  */
 import type { Player } from "../sim";
 import type { BlockAssignment, ContactResult } from "./types";
-
-/** Canvas default. Above 1 sheds more often. */
-const BREAK_BLOCK = 0.75;
-/** Canvas default. Above 1 means more yards after contact and fewer finished tackles. */
-const BREAK_TACKLE = 1.5;
+import { readBreakBlock, readBreakTackle } from "./tuning";
 
 export type BodyContact = {
   /** Remaining seconds of a held block. */
@@ -194,7 +190,7 @@ export function resolveBlockContact(
     }
     const hold = ((olOnDt || block.driveBlock ? 1.15 : 0.55) + (olOnDt || block.driveBlock ? 0.22 : 0.15))
       * (block.sturdyBlock ? 1.2 : 1)
-      / Math.max(0.45, BREAK_BLOCK);
+      / Math.max(0.45, readBreakBlock());
     clock.engage = hold;
     clock.slowed = Math.max(clock.slowed, defender.role === "DT" ? 0.62 : 0.42);
     clock.last = result("engaged", blocker.id, defender.id, hold, clock.pushYards);
@@ -228,7 +224,7 @@ function tackleChance(carrier: Player, defender: Player, sprinting: boolean): nu
   const dot = (fx / flen) * (dx / dlen) + (fy / flen) * (dy / dlen);
   let chance = dot > 0.35 ? 0.62 : dot < -0.15 ? 0.22 : 0.38;
   if (sprinting) chance *= 0.75;
-  return Math.max(0.08, Math.min(0.85, chance / BREAK_TACKLE));
+  return Math.max(0.08, Math.min(0.85, chance / readBreakTackle()));
 }
 
 /**
@@ -245,8 +241,8 @@ function round3(value: number) {
 
 /**
  * Carrier against a free defender.
- * A squared-up angle finishes more often. `BREAK_TACKLE` (1.5) and a sprint
- * lower that. A miss delays the defender and does not end the play. A finish
+ * A squared-up angle finishes more often. Break tackle (labeled 1.00 runs at
+ * 1.5) and a sprint lower that. A miss delays the defender and does not end the play. A finish
  * is `tackled` and does not shove anyone; the stiff-arm shove stays in `step`.
  * Returns null on a near miss, an early overlap, a blocked defender, or an
  * approach that was already judged. `age` is seconds since the snap, for the

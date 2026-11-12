@@ -1,11 +1,16 @@
 /**
- * User defender for Game and Practice. One body, v10 huddle and live controls.
+ * User defender for Game and Practice. One body, huddle and live controls.
  * The ball carrier stays the controlled halfback. Other defenders stay on AI.
  * The saved key is whoever was selected at the snap. A live switch does not change it.
+ * Huddle: A or Enter snaps. Y changes player. X and B do not. A stick, d-pad, or WASD
+ * at the Y press points; a plain Y takes the next defender. Live Y does the same
+ * while this defender is free. A Y press on a blocked defender still sheds.
  */
 import { FIELD, clamp } from "../../field/spec";
 import type { Player } from "../sim";
 import { contactOf } from "./contact";
+import { bodyTravelScale, readPlaySpeed } from "./tuning";
+import { attackSign, shiftDownfield } from "./attack";
 import { flushStanceReleases, releaseStance } from "./stance";
 import type { BlockAssignment, PlayAssignment } from "./types";
 
@@ -25,7 +30,8 @@ export type DefenseStick = {
   x: number;
   yard: number;
   sprint: boolean;
-  switchOn: boolean;
+  /** Y. Point with the stick, or take the next defender. */
+  changeOn: boolean;
   dive: boolean;
   shed: boolean;
   wrap: boolean;
@@ -37,9 +43,11 @@ export type DefenseStick = {
   dpadY: number;
   cyclePrev: boolean;
   cycleNext: boolean;
-  snapY: boolean;
   snapEnter: boolean;
+  /** Gamepad A. Snaps in the huddle. */
   padA: boolean;
+  /** Ignore A and Enter for this frame. The button edge still updates. */
+  blockSnap: boolean;
   aimCarrier: boolean;
 };
 
@@ -62,13 +70,9 @@ let key: DefKey | null = null;
 let currentId: string | null = null;
 let pose: string | null = null;
 let suppressA = false;
-let aArmed = false;
-let aHold = 0;
-let switchWas = true;
-let pointLatch = false;
-let pointed = false;
+let aDown = true;
+let changeDown = true;
 let cycleEdge = true;
-let yEdge = true;
 let enterEdge = true;
 let shedEdge = false;
 let wrapEdge = false;
@@ -170,13 +174,9 @@ export function resetDefense() {
   pose = null;
   clearAttack();
   suppressA = false;
-  aArmed = false;
-  aHold = 0;
-  switchWas = true;
-  pointLatch = false;
-  pointed = false;
+  aDown = true;
+  changeDown = true;
   cycleEdge = true;
-  yEdge = true;
   enterEdge = true;
   shedEdge = false;
   wrapEdge = false;
@@ -290,8 +290,6 @@ export function seatDefender(players: readonly DefenseBody[]) {
   diveEdge = false;
   hitLatch = false;
   hitCool = 0;
-  pointLatch = false;
-  pointed = false;
   const found = key ? findByKey(players, key) : null;
   const pick = found ?? pickDefaultDefender(players);
   currentId = pick?.id ?? null;
@@ -300,23 +298,41 @@ export function seatDefender(players: readonly DefenseBody[]) {
 /** The arming press is still down. Ignore it until it lifts. */
 export function beginDefenseHuddle(padAHeld: boolean) {
   suppressA = padAHeld;
-  aArmed = false;
-  aHold = 0;
-  switchWas = true;
-  pointLatch = false;
-  pointed = false;
+  aDown = true;
+  changeDown = true;
   cycleEdge = true;
-  yEdge = true;
   enterEdge = true;
 }
 
-function cycle(players: readonly DefenseBody[], dir: number) {
+function cycle(players: readonly DefenseBody[], dir: number, save: boolean) {
   const seq = sequence(players);
   if (!seq.length) return;
   ensure(players);
   let index = seq.findIndex((player) => player.id === currentId);
   if (index < 0) index = 0;
-  select(players, seq[(index + dir + seq.length) % seq.length] ?? null, true);
+  select(players, seq[(index + dir + seq.length) % seq.length] ?? null, save);
+}
+
+/**
+ * Stick, d-pad, or WASD at the press. A unit vector in field axes, or null.
+ * The stick is already past the radial deadzone, so any leftover deflection counts.
+ */
+function aimVector(hold: DefenseStick): { x: number; y: number } | null {
+  const stick = Math.hypot(hold.x, hold.yard);
+  if (stick > 1e-4) return { x: hold.x / stick, y: hold.yard / stick };
+  const pad = Math.hypot(hold.dpadX, hold.dpadY);
+  if (pad > 1e-4) return { x: hold.dpadX / pad, y: hold.dpadY / pad };
+  return null;
+}
+
+/** Point along the stick, or take the next defender when nothing is aimed. */
+function chooseDefender(players: readonly DefenseBody[], hold: DefenseStick, me: DefenseBody | null, save: boolean) {
+  const aim = aimVector(hold);
+  if (aim) {
+    select(players, pointSelect(players, aim.x, aim.y, me), save);
+    return;
+  }
+  cycle(players, 1, save);
 }
 
 function pointSelect(players: readonly DefenseBody[], dx: number, dy: number, from: DefenseBody | null) {
@@ -346,28 +362,6 @@ function pointSelect(players: readonly DefenseBody[], dx: number, dy: number, fr
   return best;
 }
 
-function bestPursuit(players: readonly DefenseBody[], carrier: Player, skip: DefenseBody | null) {
-  const ranked: { player: DefenseBody; score: number }[] = [];
-  const cdX = carrier.facingX;
-  const cdY = carrier.facingYard;
-  for (const player of defenders(players)) {
-    const clock = contactOf(player);
-    if (clock.pancake > 0 || clock.recover > 0) continue;
-    const toX = carrier.x - player.x;
-    const toY = carrier.yard - player.yard;
-    const dist = Math.hypot(toX, toY) || 1;
-    const side = Math.abs(cdX * (toY / dist) - cdY * (toX / dist));
-    const blocked = clock.engage > 0 ? 2.6 : 0;
-    const dtBias = player.role === "DT" ? 0.55 : 0;
-    ranked.push({ player, score: dist * (1.12 - side * 0.32) + blocked + dtBias });
-  }
-  ranked.sort((a, b) => a.score - b.score);
-  const first = ranked[0]?.player ?? null;
-  if (!first) return skip ?? pickDefaultDefender(players);
-  if (first === skip) return ranked[1]?.player ?? skip;
-  return first;
-}
-
 function face(player: Player, x: number, yard: number) {
   const mag = Math.hypot(x, yard);
   if (mag < 1e-4) return;
@@ -381,72 +375,52 @@ function slide(player: Player, vx: number, vy: number, dt: number, los: number, 
   const cap = bodyCap();
   if (presnap) {
     player.x = clamp(player.x, 2.2, FIELD.width - 2.2);
-    player.yard = clamp(player.yard, los + 1.15, Math.min(cap, los + 18));
+    const near = shiftDownfield(los, 1.15);
+    const far = shiftDownfield(los, 18);
+    player.yard = clamp(player.yard, Math.max(0.5, Math.min(near, far)), Math.min(cap, Math.max(near, far)));
   } else {
     player.x = clamp(player.x, 0.8, FIELD.width - 0.8);
-    player.yard = clamp(player.yard, Math.max(0, los - 12), cap);
+    const back = shiftDownfield(los, -12);
+    const front = attackSign() > 0 ? cap : 0;
+    player.yard = clamp(player.yard, Math.min(back, front), Math.max(back, front));
   }
 }
 
 function shade(player: DefenseBody | null, hold: DefenseStick, dt: number, los: number) {
   if (!player || dt <= 0) return;
-  if (hold.switchOn && Math.hypot(hold.x, hold.yard) > 0.4) return;
   const mag = Math.hypot(hold.x, hold.yard);
   if (mag < 0.16) return;
-  const speed = shadeSpeed(player.role);
+  const speed = shadeSpeed(player.role) * readPlaySpeed();
   const vx = (hold.x / mag) * speed;
   const vy = (hold.yard / mag) * speed;
   slide(player, vx, vy, dt, los, true);
   face(player, hold.x, hold.yard);
 }
 
-/** Huddle. Cycle, point, shade. Returns snap when Y, Enter, or a held A fires. */
+/** Huddle. Y changes player. A or Enter snaps. The stick shades. */
 export function tickDefenseHuddle(players: readonly DefenseBody[], hold: DefenseStick, dt: number, los: number): "hold" | "snap" {
   ensure(players);
   const me = current(players);
-  const stickMag = Math.hypot(hold.x, hold.yard);
-  if (hold.switchOn && stickMag > 0.4) {
-    if (!pointLatch) {
-      select(players, pointSelect(players, hold.x, hold.yard, me), true);
-      pointLatch = true;
-    }
-    pointed = true;
-  } else if (!hold.switchOn) {
-    pointLatch = false;
-    pointed = false;
-  } else if (stickMag < 0.28) {
-    pointLatch = false;
-  }
-  if (hold.switchOn && !cycleEdge && stickMag < 0.28 && !pointed) cycle(players, -1);
-  if (hold.cyclePrev && !cycleEdge) cycle(players, -1);
-  if (hold.cycleNext && !cycleEdge) cycle(players, 1);
-  cycleEdge = hold.switchOn || hold.cyclePrev || hold.cycleNext;
+  const changeEdge = hold.changeOn && !changeDown;
+  if (changeEdge) chooseDefender(players, hold, me, true);
+  changeDown = hold.changeOn;
+  if (hold.cyclePrev && !cycleEdge) cycle(players, -1, true);
+  if (hold.cycleNext && !cycleEdge) cycle(players, 1, true);
+  cycleEdge = hold.cyclePrev || hold.cycleNext;
 
   let snapped = false;
-  if (hold.snapEnter && !enterEdge) snapped = true;
+  if (hold.snapEnter && !enterEdge && !hold.blockSnap) snapped = true;
   enterEdge = hold.snapEnter;
-  if (hold.snapY && !yEdge && stickMag < 0.28) snapped = true;
-  yEdge = hold.snapY;
-  if (hold.padA && !suppressA) {
-    if (!aArmed) {
-      aArmed = true;
-      aHold = 0;
-    }
-    aHold += dt;
-    if (aHold >= 0.4) snapped = true;
-  } else if (suppressA) {
+  if (suppressA) {
     if (!hold.padA) suppressA = false;
-  } else if (aArmed) {
-    if (aHold < 0.4) cycle(players, 1);
-    aArmed = false;
-    aHold = 0;
+  } else if (hold.padA && !aDown && !hold.blockSnap) {
+    snapped = true;
   }
-  shade(current(players), hold, dt, los);
+  aDown = hold.padA;
+  if (!changeEdge) shade(current(players), hold, dt, los);
   if (snapped) {
     const chosen = current(players);
     if (chosen) remember(players, chosen);
-    aArmed = false;
-    aHold = 0;
     return "snap";
   }
   return "hold";
@@ -462,9 +436,7 @@ export function beginDefenseLive(players: readonly DefenseBody[]) {
   shedEdge = false;
   wrapEdge = false;
   punchEdge = false;
-  switchWas = true;
-  pointLatch = false;
-  pointed = false;
+  changeDown = true;
   const me = current(players);
   if (me) releaseStance(me);
   flushStanceReleases();
@@ -557,6 +529,14 @@ function tryWrap(me: DefenseBody, carrier: Player, which: "lt" | "rt") {
   }
 }
 
+function defenderEngaged(players: readonly DefenseBody[], me: DefenseBody) {
+  if (contactOf(me).engage > 0) return true;
+  return players.some((player) => {
+    if (player.assignment.kind !== "block") return false;
+    return player.assignment.targetId === me.id || Math.hypot(player.x - me.x, player.yard - me.yard) < 2.4;
+  });
+}
+
 function shed(players: readonly DefenseBody[], me: DefenseBody) {
   const clock = contactOf(me);
   let blocker: DefenseBody | null = null;
@@ -578,11 +558,7 @@ function shed(players: readonly DefenseBody[], me: DefenseBody) {
       }
     }
   }
-  const engaged = clock.engage > 0 || players.some((player) => {
-    if (player.assignment.kind !== "block") return false;
-    return player.assignment.targetId === me.id || Math.hypot(player.x - me.x, player.yard - me.yard) < 2.4;
-  });
-  if (!engaged) return;
+  if (!defenderEngaged(players, me)) return;
   clock.engage = 0;
   clock.slowed = 0;
   if (blocker && blocker.assignment.kind === "block") {
@@ -639,27 +615,12 @@ export function tickDefenseLive(
   }
   const meBefore = current(players);
   const stickMag = Math.hypot(hold.x, hold.yard);
-  if (hold.switchOn) {
-    const dpadMag = Math.hypot(hold.dpadX, hold.dpadY);
-    if (stickMag > 0.4) {
-      if (!pointLatch) {
-        const pick = pointSelect(players, hold.x, hold.yard, meBefore) ?? (meBefore ? bestPursuit(players, carrier, meBefore) : null);
-        select(players, pick, false);
-        pointLatch = true;
-      }
-      pointed = true;
-    } else {
-      pointLatch = false;
-      if (!switchWas && !pointed && meBefore) {
-        if (dpadMag > 0.2) select(players, pointSelect(players, hold.dpadX, hold.dpadY, meBefore) ?? bestPursuit(players, carrier, meBefore), false);
-        else select(players, bestPursuit(players, carrier, meBefore), false);
-      }
-    }
-  } else {
-    pointLatch = false;
-    pointed = false;
-  }
-  switchWas = hold.switchOn;
+  const changeEdge = hold.changeOn && !changeDown;
+  // Shed stays on Y while a block is on, even if the stick is pushing. A free defender
+  // uses that same press to point or take the next teammate.
+  const shedPlain = changeEdge && !!meBefore && defenderEngaged(players, meBefore);
+  if (changeEdge && !shedPlain) chooseDefender(players, hold, meBefore, false);
+  changeDown = hold.changeOn;
   const me = current(players);
   if (!me || finished) {
     pose = finished ? pose : null;
@@ -671,7 +632,7 @@ export function tickDefenseLive(
     return result();
   }
   strafeNow = hold.strafe;
-  if (hold.shed && !shedEdge) shed(players, me);
+  if (hold.shed && !shedEdge && !(changeEdge && !shedPlain)) shed(players, me);
   shedEdge = hold.shed;
   if (hold.wrap && !wrapEdge) tryWrap(me, carrier, "lt");
   if (hold.punch && !punchEdge) tryWrap(me, carrier, "rt");
@@ -691,7 +652,7 @@ export function tickDefenseLive(
   if (finished) return result();
 
   const clock = contactOf(me);
-  let speed = defenderSpeed(me.role, hold.sprint, strafeNow, clock.engage > 0);
+  let speed = defenderSpeed(me.role, hold.sprint, strafeNow, clock.engage > 0) * bodyTravelScale("def", true, true);
   if (strafeNow && Math.hypot(carrier.x - me.x, carrier.yard - me.yard) > 0.35) {
     face(me, carrier.x - me.x, carrier.yard - me.yard);
   }
@@ -805,7 +766,7 @@ const idleStick: DefenseStick = {
   x: 0,
   yard: 0,
   sprint: false,
-  switchOn: false,
+  changeOn: false,
   dive: false,
   shed: false,
   wrap: false,
@@ -817,9 +778,9 @@ const idleStick: DefenseStick = {
   dpadY: 0,
   cyclePrev: false,
   cycleNext: false,
-  snapY: false,
   snapEnter: false,
   padA: false,
+  blockSnap: false,
   aimCarrier: false,
 };
 
@@ -856,10 +817,40 @@ export function defenseSelfCheck() {
   };
   beginDefenseLive(roster);
   tickDefenseLive(roster, carrier, idleStick, 0.016, 50);
-  tickDefenseLive(roster, carrier, { ...idleStick, switchOn: true }, 0.016, 50);
+  tickDefenseLive(roster, carrier, { ...idleStick, changeOn: true }, 0.016, 50);
   if (readUserDefenderId() === saved) throw new Error("live switch leaves the snap defender");
+  tickDefenseLive(roster, carrier, idleStick, 0.016, 50);
+  const xHeld = readUserDefenderId();
+  tickDefenseLive(roster, carrier, { ...idleStick, dive: true }, 0.016, 50);
+  if (readUserDefenderId() !== xHeld) throw new Error("X does not change player");
+  const blocked = roster.find((player) => player.id === xHeld);
+  if (!blocked) throw new Error("live defender missing");
+  contactOf(blocked).engage = 0.4;
+  tickDefenseLive(roster, carrier, { ...idleStick, changeOn: true, shed: true, yard: 1 }, 0.016, 50);
+  if (readUserDefenderId() !== xHeld) throw new Error("Y on a block sheds instead of switching");
+  if (contactOf(blocked).engage !== 0) throw new Error("Y sheds the block");
   seatDefender(roster);
   if (readUserDefenderId() !== saved) throw new Error("next huddle restores the snap defender");
+  resetDefense();
+  seatDefender(roster);
+  beginDefenseHuddle(false);
+  tickDefenseHuddle(roster, idleStick, 0.016, 50);
+  if (tickDefenseHuddle(roster, { ...idleStick, changeOn: true, yard: -1 }, 0.016, 50) !== "hold") throw new Error("Y does not snap");
+  if (readUserDefenderId() !== "lb-0") throw new Error("Y plus stick points south at the linebacker");
+  tickDefenseHuddle(roster, idleStick, 0.016, 50);
+  if (tickDefenseHuddle(roster, { ...idleStick, changeOn: true }, 0.016, 50) !== "hold") throw new Error("plain Y does not snap");
+  if (readUserDefenderId() !== "db-0") throw new Error("plain Y takes the next defender");
+  tickDefenseHuddle(roster, idleStick, 0.016, 50);
+  const stayed = readUserDefenderId();
+  tickDefenseHuddle(roster, { ...idleStick, dive: true, x: 1 }, 0.016, 50);
+  if (readUserDefenderId() !== stayed) throw new Error("X does not change player in the huddle");
+  beginDefenseHuddle(true);
+  if (tickDefenseHuddle(roster, { ...idleStick, padA: true }, 0.016, 50) !== "hold") throw new Error("A held from the lineup does not snap");
+  tickDefenseHuddle(roster, idleStick, 0.016, 50);
+  if (tickDefenseHuddle(roster, { ...idleStick, padA: true, blockSnap: true }, 0.016, 50) !== "hold") throw new Error("a blocked A does not snap");
+  if (tickDefenseHuddle(roster, { ...idleStick, padA: true }, 0.016, 50) !== "hold") throw new Error("A held through a block is not a new press");
+  tickDefenseHuddle(roster, idleStick, 0.016, 50);
+  if (tickDefenseHuddle(roster, { ...idleStick, padA: true }, 0.016, 50) !== "snap") throw new Error("A snaps");
   if (hitDecision(-0.2, 4, false) === "connect") throw new Error("narrow hit window");
   if (hitDecision(-0.2, 4, true) !== "connect") throw new Error("strafe widens the hit window");
   if (hitDecision(-0.8, 2, true) !== "whiff") throw new Error("a backward flick whiffs");

@@ -4,6 +4,7 @@
  * Ranges match the v10 canvas steppers. HB stays at 1; the canvas has no
  * HB control. Changing a count does not restage the live roster.
  */
+import { readPrefs, writePrefs } from "../prefs";
 import { DEFAULT_PERSONNEL, type PersonnelCounts } from "./types";
 
 export type PersonnelKey = "ol" | "te" | "fb" | "qb" | "dt" | "lb" | "db";
@@ -34,7 +35,20 @@ export const OFFENSE_PERSONNEL = ["ol", "te", "fb", "qb"] as const satisfies rea
 /** v10 defense panel order. */
 export const DEFENSE_PERSONNEL = ["dt", "lb", "db"] as const satisfies readonly PersonnelKey[];
 
-let counts: PersonnelCounts = { ...DEFAULT_PERSONNEL };
+function openingCounts(): PersonnelCounts {
+  const counts: PersonnelCounts = { ...DEFAULT_PERSONNEL };
+  const saved = readPrefs().personnel;
+  if (!saved) return counts;
+  for (const key of Object.keys(PERSONNEL_LIMITS) as PersonnelKey[]) {
+    const value = saved[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    const limit = PERSONNEL_LIMITS[key];
+    counts[key] = Math.min(limit.max, Math.max(limit.min, Math.round(value)));
+  }
+  return counts;
+}
+
+let counts: PersonnelCounts = openingCounts();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -56,5 +70,16 @@ export function stepPersonnel(key: PersonnelKey, delta: -1 | 1) {
   const next = Math.min(limit.max, Math.max(limit.min, counts[key] + delta));
   if (next === counts[key]) return;
   counts = { ...counts, [key]: next };
+  writePrefs({
+    personnel: {
+      ol: counts.ol,
+      te: counts.te,
+      fb: counts.fb,
+      qb: counts.qb,
+      dt: counts.dt,
+      lb: counts.lb,
+      db: counts.db,
+    },
+  });
   emit();
 }

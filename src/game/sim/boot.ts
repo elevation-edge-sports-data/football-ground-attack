@@ -2,7 +2,7 @@
  * What the 3D view boots, and the short series that follows a tackle or a score.
  * The default is a full play. `?preview=1` keeps the six-player pose preview.
  */
-import { FIELD, SPOT_PAST_GOAL, SPOT_YARD_MAX, SPOT_YARD_MIN, clamp, hashLeft, hashNearSide, hashRight } from "../../field/spec";
+import { FIELD, SPOT_YARD_MAX, SPOT_YARD_MIN, clamp, hashLeft, hashNearSide, hashRight } from "../../field/spec";
 import { createSim, type Player, type Sim } from "../sim";
 import { attachAssignments, type AssignedPlay } from "./assign";
 import { applyPresnapLook, spreadInteriorDefense } from "./look";
@@ -10,10 +10,22 @@ import { applyPresnapStances } from "./stance";
 import { readPersonnel } from "./personnel";
 import { createPlaySim, hashSnapX, placeEntitiesForNewPlay, sideYardToAbsolute, type PlacementCall } from "./place";
 import { DEF_SCHEMES, OFF_PLAYS } from "./plays";
+import { readPrefs, writePrefs } from "../prefs";
 import { setReplayCamera } from "../replayCamera";
 import { playDiagram, type PlayDiagram } from "../snapArt";
 import { consumeFirstContact, resetFirstContact } from "./contact";
 import { consumeDefenseFinish, resetDefense, seatDefender } from "./defense";
+import {
+  downfieldDelta,
+  flipAttackDirection,
+  homeTwentyFive,
+  orientLineup,
+  readAttackNorth,
+  safetySpotYard,
+  setAttackNorth,
+  setCameraNorth,
+  yardsToGoal,
+} from "./attack";
 
 /** Four quarters. The banner quarter stays on the 4th; the clock still rolls all four. */
 export const QUARTER_COUNT = 4;
@@ -56,7 +68,7 @@ export type Scoreboard = {
   downText: string;
   /** Absolute yard of that snap. The banner shows it as a field yard line. */
   ballOn: number;
-  /** Home attacks north. The banner triangle points up for home and down for away. */
+  /** True while the offense attacks north. The banner triangle points that way. */
   homePossession: boolean;
   /** Fourth down failed. Further snaps are refused, same as a clock at 0:00. */
   seriesOver: boolean;
@@ -66,13 +78,13 @@ export type Scoreboard = {
   paused: boolean;
   /** Formation is armed and the lineup poses are up. Movement waits for the snap. */
   awaitSnap: boolean;
-  /** Game is the opening mode. Practice hides the clock and calls the picked plays. */
-  mode: "game" | "practice";
-  /** Controlled side. Offense is the default. Defense is one user defender. */
+  /** Drill, practice, or game. Drill uses the game rules. A fresh load rolls one, then a saved choice replaces it. */
+  mode: "drill" | "practice" | "game";
+  /** Controlled side. A fresh load rolls one, then a saved choice replaces it. */
   side: "off" | "def";
 };
 
-export type SessionMode = "game" | "practice";
+export type SessionMode = "drill" | "practice" | "game";
 
 export type PracticeUi = {
   mode: SessionMode;
@@ -90,8 +102,38 @@ export type BallPoint = { x: number; yard: number };
 let playIndex = 0;
 let schemeIndex = 0;
 let pendingSpot: { los: number; ballX: number; exact?: boolean } | null = null;
-/** v10 practice opens at OPP 30, between the hashes. Game stays the default until the toggle. */
-let sessionMode: SessionMode = "game";
+const SESSION_MODES: SessionMode[] = ["drill", "practice", "game"];
+
+function rollSessionMode(): SessionMode {
+  return SESSION_MODES[Math.floor(Math.random() * SESSION_MODES.length)] ?? "game";
+}
+
+/** Old saves used game or practice. Anything else keeps the fresh roll. */
+function savedSessionMode(value: unknown): SessionMode | null {
+  if (value === "drill" || value === "practice" || value === "game") return value;
+  return null;
+}
+
+function rollPlaySide(): "off" | "def" {
+  return Math.random() < 0.5 ? "def" : "off";
+}
+
+/** v10 practice opens at OPP 30, between the hashes. A fresh load rolls the mode, then saved prefs apply. */
+let sessionMode: SessionMode = rollSessionMode();
+/** Rolled before the saved side, so a cleared store still varies. */
+let openingSide: "off" | "def" = rollPlaySide();
+let openingProfile: Scoreboard["profile"] = "wings";
+{
+  const saved = readPrefs();
+  const savedMode = savedSessionMode(saved.mode);
+  if (savedMode) sessionMode = savedMode;
+  if (saved.side === "off" || saved.side === "def") openingSide = saved.side;
+  if (saved.profile === "wings" || saved.profile === "independent" || saved.profile === "classic") {
+    openingProfile = saved.profile;
+  }
+  // A fresh GAME ignores the saved side. Drill and practice keep it.
+  if (sessionMode === "game") openingSide = rollPlaySide();
+}
 let practicePlay = 0;
 let practiceScheme = 0;
 let practiceSpotX = FIELD.width * 0.5;
@@ -131,7 +173,7 @@ type GameHold = {
 
 let gameHold: GameHold | null = null;
 let practiceUi: PracticeUi = {
-  mode: "game",
+  mode: sessionMode,
   playIndex: 0,
   schemeIndex: 0,
   aiming: false,
@@ -161,11 +203,11 @@ let board: Scoreboard = {
   ballOn: BOOT_PLAY.los,
   homePossession: true,
   seriesOver: false,
-  profile: "wings",
+  profile: openingProfile,
   paused: false,
   awaitSnap: false,
-  mode: "game",
-  side: "off",
+  mode: sessionMode,
+  side: openingSide,
 };
 /** Seconds left in the current quarter. The board copy updates when the displayed second changes. */
 let clockLeft = QUARTER_SECONDS;
@@ -173,11 +215,14 @@ let clockLeft = QUARTER_SECONDS;
 let quarter = 1;
 /** Set when a whistle rolls the clock into a new quarter. Cleared once that spot is applied. */
 let enteredQuarter: number | null = null;
-/** Absolute yard line. Home attacks north, so the home 25 is yard 25. */
-const HOME_25 = 25;
 let down = 1;
 let toGo = 10;
 let seriesOver = false;
+/** Side the user had at the kickoff of this GAME. Q3 takes the other role. */
+let gameQ1Side: "off" | "def" | null = null;
+let gameQ3SideApplied = false;
+/** Side for the snap after a GAME touchdown. Applied after the Q3 flip so the kickoff wins. */
+let gameKickSide: "off" | "def" | null = null;
 /** Yards to gain for the snap on the field. The banner can move ahead between snaps. */
 let snappedToGo = 10;
 const boardListeners = new Set<() => void>();
@@ -259,9 +304,11 @@ function prepareGameSideStage() {
 
 /** Restage the huddle. The free safety, or the defender from the last snap, is seated on defense. */
 export function togglePlaySide() {
+  if (sessionMode === "game") return;
   clearSittingStats(true);
   board = { ...board, side: board.side === "def" ? "off" : "def" };
-  if (sessionMode === "game") prepareGameSideStage();
+  writePrefs({ side: board.side });
+  if (sessionMode !== "practice") prepareGameSideStage();
   publish();
   queueStage();
 }
@@ -358,9 +405,53 @@ function wrapIndex(index: number, length: number) {
   return ((Math.round(index) % length) + length) % length;
 }
 
+/** Fresh clock, quarter, chains, spot, and box score for a DRILL ↔ GAME switch. */
+function resetMatchHud() {
+  playIndex = 0;
+  schemeIndex = 0;
+  pendingSpot = null;
+  setAttackNorth(true);
+  setCameraNorth(true);
+  resetFirstContact();
+  resetDefense();
+  clockLeft = QUARTER_SECONDS;
+  quarter = 1;
+  enteredQuarter = null;
+  down = 1;
+  toGo = 10;
+  seriesOver = false;
+  gameQ3SideApplied = false;
+  gameKickSide = null;
+  stageSpot = { los: BOOT_PLAY.los, snapX: FIELD.width / 2, exact: true };
+  stageDead = false;
+  stageTitle = "";
+  stageDetail = "";
+  stageDownText = "1st & 10";
+  board = {
+    ...board,
+    youScore: 0,
+    cpuScore: 0,
+    totalYards: 0,
+    firstDowns: 0,
+    touchdowns: 0,
+    yac: 0,
+    over: false,
+    title: "",
+    detail: "",
+    clock: QUARTER_SECONDS,
+    quarter: 1,
+    downText: "1st & 10",
+    ballOn: BOOT_PLAY.los,
+    homePossession: true,
+    seriesOver: false,
+    paused: false,
+    awaitSnap: true,
+  };
+}
+
 /** Re-clicking the current mode does not restage. */
 export function setSessionMode(next: SessionMode) {
-  const mode: SessionMode = next === "practice" ? "practice" : "game";
+  const mode: SessionMode = next === "drill" || next === "practice" ? next : "game";
   if (mode === sessionMode) return;
   if (mode !== "practice") practiceAiming = false;
   if (mode === "practice") {
@@ -404,9 +495,17 @@ export function setSessionMode(next: SessionMode) {
     stageDetail = gameHold.detail;
     stageDownText = gameHold.downText;
     gameHold = null;
+  } else if (sessionMode !== "practice") {
+    resetMatchHud();
+    sessionMode = mode;
+    if (mode === "game") gameQ1Side = board.side === "def" ? "def" : "off";
+    writePrefs({ mode: sessionMode });
+    queueStage();
+    return;
   }
   clearSittingStats(true);
   sessionMode = mode;
+  writePrefs({ mode: sessionMode });
   queueStage();
 }
 
@@ -539,19 +638,44 @@ export function formatBallOn(absYard: number): string {
 
 /** "& Goal" only when the line to gain is on or past the goal line. */
 function formatDown(value: number, distance: number, los: number) {
-  const toGoal = 100 - los;
+  const toGoal = yardsToGoal(los);
   if (toGoal <= distance) return `${downName(value)} & Goal`;
   return `${downName(value)} & ${formatDistance(distance)}`;
 }
 
 function freshToGo(los: number) {
-  return Math.min(10, Math.max(1, 100 - los));
+  return Math.min(10, Math.max(1, yardsToGoal(los)));
+}
+
+/** Home's goal is yard 0. Away's goal is yard 100. `fromGoal` is that team's own yard line. */
+function teamOwnLine(team: "home" | "away", fromGoal: number): number {
+  return team === "home" ? fromGoal : FIELD.length - fromGoal;
+}
+
+/**
+ * Game mode only. Home attacks north. Away attacks south.
+ * Starts a new 1st & 10 (or 1st & Goal inside the 10).
+ */
+function setNextPossession(team: "home" | "away", los: number, ballX: number, exact = false) {
+  setAttackNorth(team === "home");
+  setCameraNorth(team === "home");
+  down = 1;
+  toGo = freshToGo(los);
+  seriesOver = false;
+  pendingSpot = { los, ballX, exact };
+  board = {
+    ...board,
+    homePossession: team === "home",
+    ballOn: los,
+    seriesOver: false,
+    downText: formatDown(down, toGo, los),
+    clock: clockLeft,
+  };
 }
 
 /** Keep the chain distance with the LOS that is actually on the field. */
 function spotChains(los: number) {
-  snappedToGo = toGo;
-  if (los < FIELD.length && los + snappedToGo > FIELD.length) snappedToGo = FIELD.length - los;
+  snappedToGo = Math.min(toGo, yardsToGoal(los));
 }
 
 /**
@@ -559,12 +683,28 @@ function spotChains(los: number) {
  * A fresh series is 10 yards ahead. Inside the 10 that yard is the goal line.
  * Returns null past the goal line or inside an end zone.
  */
-export function readFirstDownYard(los: number): number | null {
+function chainMark(los: number, distance: number): number | null {
   if (sessionMode === "practice") return null;
-  if (los >= FIELD.length) return null;
-  const yard = los + snappedToGo;
-  if (yard <= los || yard > FIELD.length || yard <= 0) return null;
+  const span = Math.min(Math.max(0, distance), yardsToGoal(los));
+  if (span <= 0) return null;
+  const yard = readAttackNorth() ? los + span : los - span;
+  if (readAttackNorth() && (yard <= los || yard > FIELD.length)) return null;
+  if (!readAttackNorth() && (yard >= los || yard < 0)) return null;
   return yard;
+}
+
+export function readFirstDownYard(los: number): number | null {
+  return chainMark(los, snappedToGo);
+}
+
+/**
+ * First-down yard for the settled next spot.
+ * Uses the new distance, the same one the next lineup will paint.
+ * Null until the whistle is spotted, and after a turnover.
+ */
+export function readPendingFirstDownYard(): number | null {
+  if (!pendingSpot) return null;
+  return chainMark(pendingSpot.los, toGo);
 }
 
 /**
@@ -605,14 +745,25 @@ function placeEnteredQuarter() {
   const entered = enteredQuarter;
   enteredQuarter = null;
   if (entered !== 3 || !pendingSpot || seriesOver) return;
-  pendingSpot = { ...pendingSpot, los: HOME_25 };
+  const spot = homeTwentyFive();
+  pendingSpot = { ...pendingSpot, los: spot };
   board = {
     ...board,
-    ballOn: HOME_25,
-    downText: formatDown(down, toGo, HOME_25),
+    ballOn: spot,
+    downText: formatDown(down, toGo, spot),
     clock: clockLeft,
     quarter,
   };
+}
+
+/**
+ * Q1→Q2 and Q3→Q4 turn the offense around. Q2→Q3 keeps the direction.
+ * The play that just ended was scored before this runs.
+ */
+function finishQuarterEntry(entered: number | null) {
+  if (entered !== 2 && entered !== 4) return;
+  flipAttackDirection();
+  board = { ...board, homePossession: readAttackNorth() };
 }
 
 export function onNextPlay(listener: () => void) {
@@ -685,6 +836,7 @@ export function readProfile() {
 export function setProfile(profile: ControlProfile) {
   if (board.profile === profile) return;
   board = { ...board, profile };
+  writePrefs({ profile });
   publish();
 }
 
@@ -726,7 +878,7 @@ const SAFETY_POINTS = 2;
  * Next snap after a safety. The goal line is yard 0. This is on the field,
  * just outside that line, not in the end zone.
  */
-const SAFETY_SPOT_YARD = SPOT_PAST_GOAL;
+
 
 function tenth(value: number) {
   return Math.round(value * 10) / 10;
@@ -740,16 +892,18 @@ function gainLabel(gain: number): { title: "Gain" | "Loss" | "No gain"; label: s
   return { title: "No gain", label: "No gain" };
 }
 
-/** Offense scores at the north goal. A defensive ball carrier scores at the south goal. */
+/** Offense scores at the goal it is attacking. A defensive carrier scores at the other goal. */
 function touchdownSide(carrier: Player | undefined, yard: number): "off" | "def" | null {
-  if (carrier?.team === "def") return yard <= 0 ? "def" : null;
-  return yard >= FIELD.length ? "off" : null;
+  const attackingNorth = readAttackNorth();
+  if (carrier?.team === "def") return (attackingNorth ? yard <= 0 : yard >= FIELD.length) ? "def" : null;
+  return (attackingNorth ? yard >= FIELD.length : yard <= 0) ? "off" : null;
 }
 
-/** Offense downed south of its goal line, or flagged from a body touch in that end zone. */
+/** Offense downed behind its own goal line, or flagged from a body touch in that end zone. */
 function isSafety(carrier: Player | undefined, forced: boolean): boolean {
   if (carrier?.team !== "off") return false;
-  return forced || carrier.yard < 0;
+  if (forced) return true;
+  return readAttackNorth() ? carrier.yard < 0 : carrier.yard > FIELD.length;
 }
 
 /**
@@ -759,7 +913,7 @@ function isSafety(carrier: Player | undefined, forced: boolean): boolean {
 function tallySnap(gain: number, runnerYard: number, score: "off" | "def" | null, firstDown: boolean) {
   const start = consumeFirstContact();
   const offensive = score !== "def";
-  const yacDelta = offensive && start != null ? tenth(runnerYard - start) : 0;
+  const yacDelta = offensive && start != null ? tenth(downfieldDelta(runnerYard, start)) : 0;
   return {
     youScore: board.youScore + (score === "off" ? OFFENSE_TOUCHDOWN_POINTS : 0),
     cpuScore: board.cpuScore + (score === "def" ? DEFENSE_TOUCHDOWN_POINTS : 0),
@@ -781,7 +935,7 @@ function settlePracticePlay(
 ) {
   const kind = touchdownSide(carrier, yard);
   if (kind) {
-    const gained = Math.max(0, yard - los);
+    const gained = Math.max(0, downfieldDelta(yard, los));
     board = {
       ...board,
       ...tallySnap(gained, yard, kind, false),
@@ -794,7 +948,7 @@ function settlePracticePlay(
     return null;
   }
   if (isSafety(carrier, safety)) {
-    const stats = tallySnap(yard - los, yard, null, false);
+    const stats = tallySnap(downfieldDelta(yard, los), yard, null, false);
     board = {
       ...board,
       ...stats,
@@ -807,7 +961,7 @@ function settlePracticePlay(
     publish();
     return null;
   }
-  const gain = measure - los;
+  const gain = downfieldDelta(measure, los);
   const said = gainLabel(gain);
   const title = ballSpot ? "Out of bounds" : said.title;
   board = { ...board, ...tallySnap(gain, yard, null, false), over: true, title, detail: said.label };
@@ -818,7 +972,7 @@ function settlePracticePlay(
 
 /**
  * Yards from the LOS and the next line of scrimmage.
- * An offensive carrier at yard 100 scores 7. A defensive carrier at yard 0 scores 8.
+ * An offensive carrier at the attack goal scores 7. A defensive carrier at the other goal scores 8.
  * Otherwise the next spot is the downed ball.
  * `tip` is the furthest-downfield point of the football at the whistle.
  * That yard is not rounded. The result line uses the same tenths as the chains.
@@ -841,9 +995,10 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
     return spot;
   }
   advanceQuarter();
+  const entered = enteredQuarter;
   const kind = touchdownSide(carrier, yard);
   if (kind) {
-    const gained = Math.max(0, yard - los);
+    const gained = Math.max(0, downfieldDelta(yard, los));
     board = {
       ...board,
       ...tallySnap(gained, yard, kind, false),
@@ -858,13 +1013,40 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
     pendingSpot = { los: nextLos, ballX: FIELD.width * 0.5 };
     board = { ...board, downText: formatDown(down, toGo, nextLos), ballOn: nextLos, seriesOver: false };
     placeEnteredQuarter();
+    finishQuarterEntry(entered);
+    // Possession is who has the ball. The user is always the home team in GAME.
+    // board.side is only the user's role, derived from that possession.
+    if (sessionMode === "game") {
+      const offenseTeam: "home" | "away" = board.side === "def" ? "away" : "home";
+      const scoringTeam: "home" | "away" = kind === "off" ? offenseTeam : offenseTeam === "home" ? "away" : "home";
+      const possession: "home" | "away" = scoringTeam === "home" ? "away" : "home";
+      const nextSide: "off" | "def" = possession === "home" ? "off" : "def";
+      board = { ...board, side: nextSide };
+      gameKickSide = nextSide;
+      setAttackNorth(possession === "home");
+      const los = teamOwnLine(possession, 25);
+      down = 1;
+      toGo = freshToGo(los);
+      seriesOver = false;
+      pendingSpot = { los, ballX: FIELD.width * 0.5 };
+      board = {
+        ...board,
+        ballOn: los,
+        seriesOver: false,
+        downText: formatDown(down, toGo, los),
+        clock: clockLeft,
+        homePossession: possession === "home",
+      };
+      console.log(`[game score] scoring=${scoringTeam} possession=${possession} userTeam=home`);
+    }
     console.log(`Touchdown. ${board.detail}. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
     publish();
     return pendingSpot;
   }
   if (isSafety(carrier, safety) && carrier) {
-    const nextLos = SAFETY_SPOT_YARD;
-    const gain = nextLos - los;
+    const scoredOn: "home" | "away" = readAttackNorth() ? "home" : "away";
+    const nextLos = safetySpotYard();
+    const gain = downfieldDelta(nextLos, los);
     const stats = tallySnap(gain, yard, null, false);
     const spotBallX = ballSpot ? hashNearSide(tip?.x ?? spotX) : hashSnapX(tip?.x ?? spotX, false);
     down = 1;
@@ -884,6 +1066,17 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
       clock: clockLeft,
     };
     placeEnteredQuarter();
+    finishQuarterEntry(entered);
+    if ((entered === 2 || entered === 4) && pendingSpot) {
+      const los = safetySpotYard();
+      pendingSpot = { ...pendingSpot, los };
+      toGo = freshToGo(los);
+      board = { ...board, ballOn: los, downText: formatDown(down, toGo, los) };
+    }
+    if (sessionMode === "game") {
+      const nextTeam = scoredOn === "home" ? "away" : "home";
+      setNextPossession(nextTeam, teamOwnLine(nextTeam, 35), FIELD.width * 0.5);
+    }
     console.log(`Safety. 2 points. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
     publish();
     return pendingSpot;
@@ -891,7 +1084,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
   const tipX = tip?.x ?? spotX;
   const tipYard = tip?.yard ?? measure;
   const nextLos = clamp(tipYard, SPOT_YARD_MIN, SPOT_YARD_MAX);
-  const exactGain = nextLos - los;
+  const exactGain = downfieldDelta(nextLos, los);
   const said = gainLabel(exactGain);
   const title = ballSpot ? "Out of bounds" : said.title;
   board = {
@@ -906,6 +1099,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
   // Out of bounds: the near end of the nearest hash tick, never the sideline.
   // In bounds: stay between the hashes, unless the tip is already on a sideline.
   const spotBallX = ballSpot ? hashNearSide(tipX) : hashSnapX(tipX, tipX <= 0.2 || tipX >= FIELD.width - 0.2);
+  let gameTurnover: { team: "home" | "away"; los: number; ballX: number; exact: boolean } | null = null;
   if (madeFirst) {
     down = 1;
     toGo = freshToGo(nextLos);
@@ -915,12 +1109,25 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
   } else {
     down += 1;
     if (down > 4) {
-      seriesOver = true;
-      pendingSpot = null;
-      board = { ...board, title: "Turnover on downs", seriesOver: true, downText: formatDown(4, toGo, los) };
+      if (sessionMode === "game") {
+        // The other team takes over at this dead-ball spot. Applied after the quarter hooks.
+        gameTurnover = {
+          team: readAttackNorth() ? "away" : "home",
+          los: nextLos,
+          ballX: spotBallX,
+          exact: ballSpot,
+        };
+        seriesOver = false;
+        pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
+        board = { ...board, title: "Turnover on downs", seriesOver: false, ballOn: nextLos };
+      } else {
+        seriesOver = true;
+        pendingSpot = null;
+        board = { ...board, title: "Turnover on downs", seriesOver: true, downText: formatDown(4, toGo, los) };
+      }
     } else {
       const remain = toGo - exactGain;
-      const room = Math.max(0, FIELD.length - nextLos);
+      const room = yardsToGoal(nextLos);
       toGo = Math.min(room, Math.max(0, remain));
       seriesOver = false;
       pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
@@ -931,9 +1138,19 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
     board = { ...board, seriesOver: false, downText: formatDown(down, toGo, nextLos) };
   }
   placeEnteredQuarter();
+  finishQuarterEntry(entered);
+  if (gameTurnover) {
+    setNextPossession(gameTurnover.team, gameTurnover.los, gameTurnover.ballX, gameTurnover.exact);
+    board = { ...board, title: "Turnover on downs" };
+  }
   console.log(`${board.detail}. ${board.downText}. YOU ${board.youScore} CPU ${board.cpuScore}.`);
   publish();
   return pendingSpot;
+}
+
+/** Settled next line of scrimmage. Null until the whistle is spotted. Drill still clears it on a turnover. */
+export function readPendingLos(): number | null {
+  return pendingSpot ? pendingSpot.los : null;
 }
 
 /** `ballSpot` is an out-of-bounds whistle. `tip` is the ball's downfield point. `safety` is an own-end-zone touch. */
@@ -946,7 +1163,26 @@ export function markPlayOver(sim: Sim, ballSpot = false, tip?: BallPoint, safety
  * Place, assign, look, and spread, then seat that roster on a play sim.
  * The carrier clocks come from `createPlaySim`. The looked bodies replace its roster.
  */
+/** Q3 of a GAME puts the user on the other side from the Q1 kickoff. One snap applies it. */
+function applyGameQ3Side() {
+  if (sessionMode !== "game" || quarter !== 3 || gameQ3SideApplied || !gameQ1Side) return;
+  gameQ3SideApplied = true;
+  const next = gameQ1Side === "off" ? "def" : "off";
+  if (board.side === next) return;
+  board = { ...board, side: next };
+}
+
+function applyGameKickSide() {
+  if (!gameKickSide) return;
+  const next = gameKickSide;
+  gameKickSide = null;
+  if (sessionMode !== "game" || board.side === next) return;
+  board = { ...board, side: next };
+}
+
 export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPlay } {
+  applyGameQ3Side();
+  applyGameKickSide();
   resetFirstContact();
   // Steppers apply here, so the live roster waits until the next snap.
   // A caller can still override one group.
@@ -956,6 +1192,7 @@ export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPl
   applyPresnapLook(assigned, setup.los);
   spreadInteriorDefense(assigned);
   applyPresnapStances(assigned.players);
+  orientLineup(assigned.players, setup.los);
   const sim = createPlaySim(lined);
   sim.players = assigned.players;
   sim.los = setup.los;
@@ -999,12 +1236,20 @@ export function markSnap() {
   for (const listener of boardListeners) listener();
 }
 
-export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
+export function bootFullPlay(rollSide = false): { sim: Sim; assigned: AssignedPlay } {
   playIndex = 0;
   schemeIndex = 0;
   pendingSpot = null;
+  setAttackNorth(true);
+  setCameraNorth(true);
   resetFirstContact();
   resetDefense();
+  gameQ3SideApplied = false;
+  gameKickSide = null;
+  const side: "off" | "def" = sessionMode === "game" && rollSide
+    ? rollPlaySide()
+    : board.side === "def" ? "def" : "off";
+  gameQ1Side = sessionMode === "game" ? side : null;
   board = {
     youScore: 0,
     cpuScore: 0,
@@ -1024,11 +1269,11 @@ export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
     ballOn: BOOT_PLAY.los,
     homePossession: true,
     seriesOver: false,
-    profile: "wings",
+    profile: board.profile,
     paused: false,
     awaitSnap: true,
     mode: sessionMode,
-    side: "off",
+    side,
   };
   clockLeft = QUARTER_SECONDS;
   quarter = 1;
@@ -1036,6 +1281,7 @@ export function bootFullPlay(): { sim: Sim; assigned: AssignedPlay } {
   down = 1;
   toGo = 10;
   seriesOver = false;
+  if (sessionMode === "practice") return buildPlay(practicePlacement());
   return buildPlay(BOOT_PLAY);
 }
 

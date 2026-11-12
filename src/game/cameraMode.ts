@@ -5,6 +5,8 @@
  * Freestyle keeps theta / phi / radius across pause and mode switches.
  */
 import { FIELD } from "../field/spec";
+import { readPrefs, writePrefs } from "./prefs";
+import { readCameraNorth } from "./sim/attack";
 
 export type CamMode = "classic" | "chase" | "broadcast" | "high" | "freestyle";
 
@@ -63,7 +65,12 @@ export const freeCam: CamOrbit & { captured: boolean } = {
   captured: false,
 };
 
-let camMode: CamMode = "classic";
+function isCamMode(value: unknown): value is CamMode {
+  return typeof value === "string" && CAM_MODES.some((item) => item.id === value);
+}
+
+const savedCam = readPrefs().cam;
+let camMode: CamMode = isCamMode(savedCam) ? savedCam : "classic";
 const listeners = new Set<() => void>();
 
 export function readCamMode(): CamMode {
@@ -73,6 +80,7 @@ export function readCamMode(): CamMode {
 export function setCamMode(mode: CamMode) {
   if (camMode === mode) return;
   camMode = mode;
+  writePrefs({ cam: mode });
   for (const listener of listeners) listener();
 }
 
@@ -94,8 +102,9 @@ export function chaseForward(facingX: number, facingYard: number): { x: number; 
 }
 
 export function placeClassic(subject: CamPoint): CamPlacement {
+  const south = readCameraNorth() ? CLASSIC_SOUTH : -CLASSIC_SOUTH;
   return {
-    eye: { x: subject.x, y: subject.y + CLASSIC_LIFT, z: subject.z + CLASSIC_SOUTH },
+    eye: { x: subject.x, y: subject.y + CLASSIC_LIFT, z: subject.z + south },
     look: { x: subject.x, y: subject.y, z: subject.z },
     up: { x: 0, y: 1, z: 0 },
     fov: CLASSIC_FOV,
@@ -137,12 +146,12 @@ export function placeBroadcast(subject: CamPoint): CamPlacement {
   };
 }
 
-/** North (+yard, -Z) is screen up. A straight-down look needs that up or the picture spins. */
+/** The attack goal is screen up. North is -Z. A straight-down look needs that up or the picture spins. */
 export function placeHigh(subject: CamPoint): CamPlacement {
   return {
     eye: { x: subject.x, y: HIGH_Y, z: subject.z },
     look: { x: subject.x, y: 0, z: subject.z },
-    up: { x: 0, y: 0, z: -1 },
+    up: { x: 0, y: 0, z: readCameraNorth() ? -1 : 1 },
     fov: HIGH_FOV,
   };
 }
