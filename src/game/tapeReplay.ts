@@ -4,7 +4,12 @@
  * puts the pause menu back on the real players.
  */
 import { clamp, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD } from "../field/spec";
-import type { Sim } from "./sim";
+import { yawFromFacing } from "./frame";
+import type { FormationFrame, FormationPlayer, FormationRole, FormationSide } from "./formationLibrary";
+import { readPlaySide } from "./sim/boot";
+import { poseForReplay } from "./sim/defense";
+import { BALL_CARRY_Y, type Sim } from "./sim";
+import { PLAYER_NUMBERS } from "./uniforms";
 
 export const TAPE_HZ = 60;
 export const TAPE_SECONDS = 30;
@@ -23,6 +28,10 @@ export type TapeBody = {
   facingYard: number;
   /** Set on the carrier, and on anyone posed while the frame is locked. */
   pose: string | null;
+  team: "off" | "def";
+  role: string;
+  /** Ball carrier. A downloaded frame uses this player as the controlled id. */
+  controlled: boolean;
 };
 
 export type TapeFrame = {
@@ -30,6 +39,8 @@ export type TapeFrame = {
   los: number;
   ballX: number;
   ballYard: number;
+  /** User role when the frame was live. Kits stay with that lineup. */
+  side: "off" | "def";
   bodies: TapeBody[];
 };
 
@@ -74,6 +85,12 @@ let undoStack: TapeAdj[] = [];
 let redoStack: TapeAdj[] = [];
 let gesture: TapeAdj | null = null;
 const editListeners = new Set<() => void>();
+
+/** At most two. A later press moves the nearer one. */
+type TapeMark = { frame: number; born: number };
+let rangeMarks: TapeMark[] = [];
+let rangePcts: readonly number[] = [];
+let rangeBorn = 0;
 
 const listeners = new Set<() => void>();
 const readyListeners = new Set<() => void>();
@@ -181,6 +198,7 @@ function capture(sim: Sim): TapeFrame {
     los: sim.los,
     ballX: sim.ballX,
     ballYard: sim.ballYard,
+    side: readPlaySide(),
     bodies: sim.players.map((player) => ({
       id: player.id,
       x: player.x,
@@ -188,7 +206,10 @@ function capture(sim: Sim): TapeFrame {
       hop: player.hop,
       facingX: player.facingX,
       facingYard: player.facingYard,
-      pose: player.controlled ? sim.pose : null,
+      pose: poseForReplay(player, sim.pose),
+      team: player.team === "def" ? "def" : "off",
+      role: player.role ?? "",
+      controlled: player.controlled === true,
     })),
   };
 }
@@ -227,6 +248,7 @@ export function beginTape(): boolean {
   playing = false;
   locked = false;
   time = tapeSpan();
+  clearTapeRangeMarks();
   publish();
   return true;
 }
@@ -237,6 +259,7 @@ function cloneFrame(frame: TapeFrame): TapeFrame {
     los: frame.los,
     ballX: frame.ballX,
     ballYard: frame.ballYard,
+    side: frame.side,
     bodies: frame.bodies.map((body) => ({ ...body })),
   };
 }
@@ -261,6 +284,7 @@ export function stopTape() {
   play = [];
   time = 0;
   clearEdit();
+  clearTapeRangeMarks();
   publish();
   publishEdit();
 }
@@ -446,6 +470,28 @@ export function turnTapeSelection(radians: number) {
   syncGesture(body);
 }
 
+/**
+ * Face the selected player toward a field direction.
+ * A cap eases the turn. Null snaps, which is the gamepad A hold.
+ */
+export function aimTapeSelection(dx: number, dyard: number, maxStep: number | null) {
+  if (!locked || !edit || !selectedId) return;
+  const body = editedBody(selectedId);
+  if (!body) return;
+  const mag = Math.hypot(dx, dyard);
+  if (mag < 1e-8) return;
+  const desired = Math.atan2(-dx / mag, dyard / mag);
+  const current = Math.atan2(-body.facingX, body.facingYard);
+  let delta = desired - current;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  if (maxStep !== null) {
+    if (delta > maxStep) delta = maxStep;
+    else if (delta < -maxStep) delta = -maxStep;
+  }
+  turnTapeSelection(delta);
+}
+
 export function endTapeNudge() {
   closeGesture();
 }
@@ -517,6 +563,139 @@ export function seekTape(fraction: number) {
   publish();
 }
 
+/** Same pools SimView paints, so a downloaded frame keeps the on-field numbers. */
+const JERSEY: Record<string, readonly number[]> = {
+  QB: [12],
+  HB: [28],
+  FB: [44],
+  TE: [80, 81, 84, 85, 86, 87, 88],
+  OL: [60, 61, 63, 65, 70, 72, 74, 76],
+  DT: [90, 92, 95, 97, 98],
+  LB: [54, 55, 56, 58],
+  DB: [20, 21, 24, 26, 31, 32],
+};
+
+const FORMATION_ROLES: readonly FormationRole[] = ["QB", "HB", "FB", "TE", "OL", "DT", "LB", "DB"];
+
+function formationRole(role: string): FormationRole | undefined {
+  return (FORMATION_ROLES as readonly string[]).includes(role) ? (role as FormationRole) : undefined;
+}
+
+function jerseyNumber(id: string, role: string): number {
+  const listed = PLAYER_NUMBERS[id];
+  if (listed !== undefined) return listed;
+  const pool = JERSEY[role];
+  if (!pool) return 0;
+  const index = Number(id.split("-")[1] ?? 0);
+  const at = Number.isFinite(index) && index > 0 ? index : 0;
+  return pool[at % pool.length] ?? pool[0] ?? 0;
+}
+
+function formationSide(source: TapeFrame): FormationSide {
+  let owner: string | null = null;
+  const players: FormationPlayer[] = source.bodies.map((body, index) => {
+    if (body.controlled) owner = body.id;
+    const role = formationRole(body.role);
+    return {
+      index,
+      id: body.id,
+      x: body.x,
+      yard: body.yard,
+      yaw: yawFromFacing(body.facingX, body.facingYard),
+      side: body.team,
+      ...(role ? { role } : {}),
+      number: jerseyNumber(body.id, body.role),
+      pose: body.pose,
+    };
+  });
+  return {
+    ball: {
+      x: source.ballX,
+      yard: source.ballYard,
+      y: owner ? BALL_CARRY_Y : 0,
+      owner,
+    },
+    players,
+  };
+}
+
+function formationFrame(index: number, at: number, original: TapeFrame, adjusted: TapeFrame): FormationFrame {
+  const controlled = original.bodies.findIndex((body) => body.controlled);
+  const controlledId = controlled >= 0 ? original.bodies[controlled]!.id : undefined;
+  return {
+    frame: index,
+    time: at,
+    ...(controlled >= 0 && controlledId ? { userId: controlled, controlledId } : {}),
+    original: formationSide(original),
+    adjusted: formationSide(adjusted),
+  };
+}
+
+function clearTapeRangeMarks() {
+  if (!rangeMarks.length && rangePcts.length === 0) return;
+  rangeMarks = [];
+  rangePcts = [];
+}
+
+function syncTapeRangePcts() {
+  const denom = play.length - 1;
+  rangePcts = denom > 0 ? rangeMarks.map((mark) => mark.frame / denom) : rangeMarks.map(() => 0);
+}
+
+/** Mark positions along the scrubber, in the order they were dropped. */
+export function tapeRangeMarkPcts(): readonly number[] {
+  return rangePcts;
+}
+
+/**
+ * Drop a mark on the frame the scrubber is showing.
+ * The first two presses add marks. A later press replaces the nearer mark,
+ * or the one placed earlier when both are the same distance away.
+ */
+export function markTapeRange(): void {
+  if (!on || !play.length) return;
+  const frame = tapeFrameIndex();
+  const born = ++rangeBorn;
+  if (rangeMarks.length < 2) {
+    rangeMarks.push({ frame, born });
+  } else {
+    const a = rangeMarks[0]!;
+    const b = rangeMarks[1]!;
+    const da = Math.abs(a.frame - frame);
+    const db = Math.abs(b.frame - frame);
+    const idx = da < db ? 0 : db < da ? 1 : a.born <= b.born ? 0 : 1;
+    rangeMarks[idx] = { frame, born };
+  }
+  syncTapeRangePcts();
+  publish();
+}
+
+/** Locked-frame positions. Null until the frame is locked. */
+export function exportTapeFrame(): FormationFrame | null {
+  if (!locked || !edit || !editBase || editIndex < 0) return null;
+  return formationFrame(editIndex, time, editBase, edit);
+}
+
+function recordedFrame(index: number): TapeFrame | null {
+  if (locked && index === editIndex && editBase) return editBase;
+  return play[index] ?? null;
+}
+
+/** Recorded frames from the earlier mark through the later mark, inclusive. */
+export function exportTapeRange(): FormationFrame[] | null {
+  if (rangeMarks.length < 2 || !play.length) return null;
+  const last = play.length - 1;
+  const lo = Math.max(0, Math.min(last, Math.min(rangeMarks[0]!.frame, rangeMarks[1]!.frame)));
+  const hi = Math.max(0, Math.min(last, Math.max(rangeMarks[0]!.frame, rangeMarks[1]!.frame)));
+  const out: FormationFrame[] = [];
+  for (let i = lo; i <= hi; i += 1) {
+    const snap = recordedFrame(i);
+    if (!snap) continue;
+    out.push(formationFrame(i, i / TAPE_HZ, snap, snap));
+  }
+  return out.length ? out : null;
+}
+
 export function stepTape(dt: number, scrub: TapeScrub) {
   if (!on || !play.length || locked) return;
   let rate = 0;
@@ -545,6 +724,7 @@ export function selfTestTape() {
   heldScrub = 0;
   ready = false;
   clearEdit();
+  clearTapeRangeMarks();
   const sim = {
     pose: "carry 1",
     los: 50,
@@ -570,6 +750,13 @@ export function selfTestTape() {
   slideTapeSelection(2, 0);
   endTapeNudge();
   if (tapeFrame()?.bodies[0]?.x !== 3) throw new Error("slide");
+  const shot = exportTapeFrame();
+  const adjusted = shot?.adjusted.players[0];
+  const original = shot?.original.players[0];
+  if (!shot || !adjusted || !original || adjusted.x !== 3 || original.x !== 1 || adjusted.id !== "hb-0") {
+    throw new Error("formation export");
+  }
+  if (shot.original.ball.x !== 37 || shot.original.ball.owner !== null) throw new Error("formation ball");
   undoTapeEdit();
   if (tapeFrame()?.bodies[0]?.x !== 1) throw new Error("undo");
   redoTapeEdit();
@@ -585,7 +772,29 @@ export function selfTestTape() {
   const at = time;
   stepTape(0.5, 0);
   if (Math.abs(time - (at + 0.5)) > 1e-6) throw new Error("playback rate");
+  seekTape(0);
+  markTapeRange();
+  seekTape(1);
+  const endIndex = tapeFrameIndex();
+  markTapeRange();
+  const range = exportTapeRange();
+  if (tapeRangeMarkPcts().length !== 2) throw new Error("two marks");
+  if (!range || range.length !== endIndex + 1) throw new Error("range download");
+  if (range[0]?.frame !== 0 || range[range.length - 1]?.frame !== endIndex) throw new Error("range ends");
+  if (exportTapeFrame()) throw new Error("unlocked frame should not download");
+  seekTape(0.04);
+  markTapeRange();
+  const marked = tapeRangeMarkPcts();
+  if (marked.length !== 2) throw new Error("third mark moves the nearer one");
+  if (!marked.some((pct) => Math.abs(pct - 1) < 1e-6)) throw new Error("far mark stayed");
+  if (marked.some((pct) => pct === 0)) throw new Error("near mark should leave the start");
+  const shorter = exportTapeRange();
+  if (!shorter || shorter.length >= range.length) throw new Error("moved mark shortens the range");
+  if (shorter[shorter.length - 1]?.frame !== endIndex) throw new Error("far mark stayed in the file");
   stopTape();
   if (readTapeOn() || readTapeLocked()) throw new Error("stop");
+  if (tapeRangeMarkPcts().length !== 0) throw new Error("marks cleared");
+  markTapeRange();
+  if (tapeRangeMarkPcts().length !== 0) throw new Error("mark while closed");
   if (!readTapeReady()) throw new Error("buffer was cleared");
 }

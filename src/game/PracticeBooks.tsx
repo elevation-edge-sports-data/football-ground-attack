@@ -2,8 +2,8 @@ import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from "rea
 import { drawPracticeCard } from "./practicePreview";
 import type { PlayDiagram } from "./snapArt";
 import { DEF_SCHEMES, OFF_PLAYS } from "./sim/plays";
-import { beginPracticeRespot, confirmPracticeRespot, readPractice, setPracticePlay, setPracticeScheme, subscribePractice } from "./sim/boot";
-import { kitById, getUniformSelection, subscribeUniforms } from "./uniforms";
+import { beginPracticeRespot, confirmPracticeRespot, readArmedCallIndex, readBoard, readPractice, setGameUserCall, setPracticePlay, setPracticeScheme, subscribeBoard, subscribePractice } from "./sim/boot";
+import { kitById, kitIdForSquad, getUniformSelection, subscribeUniforms } from "./uniforms";
 
 const wrap: CSSProperties = {
   position: "absolute",
@@ -27,6 +27,13 @@ const row: CSSProperties = {
   gap: 8,
 };
 
+const bookStack: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-end",
+  gap: 8,
+};
+
 const losPanel: CSSProperties = {
   width: "100%",
   maxWidth: 448,
@@ -40,17 +47,19 @@ const losPanel: CSSProperties = {
   letterSpacing: "0.03em",
 };
 
-const spotButton: CSSProperties = {
-  font: "inherit",
-  fontWeight: 700,
-  letterSpacing: "0.06em",
-  color: "#fff",
-  background: "#0c1410",
-  border: "1px solid #fb4f14",
-  borderRadius: 4,
-  padding: "4px 10px",
-  cursor: "pointer",
-};
+function spotButtonStyle(accent: string, confirm = false): CSSProperties {
+  return {
+    font: "inherit",
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    color: "#fff",
+    background: confirm ? accent : "#0c1410",
+    border: `1px solid ${accent}`,
+    borderRadius: 4,
+    padding: "4px 10px",
+    cursor: "pointer",
+  };
+}
 
 function inkOn(hex: string) {
   const h = hex.replace("#", "");
@@ -85,7 +94,6 @@ function Book({
   return (
     <div
       style={{
-        width: 220,
         borderRadius: 6,
         overflow: "hidden",
         border: `2px solid ${jersey}`,
@@ -100,66 +108,77 @@ function Book({
           gridTemplateColumns: "2.2rem 1fr",
           alignItems: "center",
           gap: 6,
-          minHeight: 28,
-          padding: "5px 8px",
+          minHeight: 36,
+          padding: "6px 8px",
           background: jersey,
           color: ink,
           fontWeight: 700,
-          fontSize: 13,
+          fontSize: 18,
           letterSpacing: "0.04em",
         }}
       >
         <span style={{ textAlign: "center" }}>{index + 1}</span>
-        <span style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textTransform: "uppercase" }}>
           {name}
         </span>
       </div>
-      <canvas ref={canvasRef} width={220} height={160} style={{ display: "block", width: "100%", height: "auto" }} />
-      <div role="listbox" aria-label={side === "off" ? "Offense plays" : "Defense schemes"} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-        {names.map((label, item) => {
-          const selected = item === index;
-          return (
-            <button
-              key={`${side}-${item}`}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onPick(item)}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "2.2rem 1fr",
-                alignItems: "center",
-                gap: 4,
-                width: "100%",
-                padding: "3px 4px",
-                border: 0,
-                borderRadius: 3,
-                background: selected ? "rgba(251, 79, 20, 0.22)" : "transparent",
-                color: selected ? "#fff" : "#a3a3a3",
-                font: "inherit",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              <span style={{ fontWeight: 700, textAlign: "center", color: selected ? "#fb4f14" : "#8a9a8a" }}>{item + 1}</span>
-              <span style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-            </button>
-          );
-        })}
+      <div style={{ display: "flex", alignItems: "stretch" }}>
+        <div
+          role="listbox"
+          aria-label={side === "off" ? "Offense plays" : "Defense schemes"}
+          style={{ flex: "0 0 9.25rem", borderRight: "1px solid rgba(255,255,255,0.08)" }}
+        >
+          {names.map((label, item) => {
+            const selected = item === index;
+            return (
+              <button
+                key={`${side}-${item}`}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onPick(item)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "3px 6px",
+                  border: 0,
+                  borderRadius: 3,
+                  background: selected ? "rgba(251, 79, 20, 0.22)" : "transparent",
+                  color: selected ? "#fff" : "#a3a3a3",
+                  font: "inherit",
+                  fontSize: 16,
+                  textAlign: "center",
+                  textTransform: "uppercase",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <canvas ref={canvasRef} width={328} height={244} style={{ display: "block", width: 328, height: 244 }} />
       </div>
     </div>
   );
 }
 
-/** Practice column: both playbooks, and a free re-spot of the ball. */
+/** Practice column: both playbooks, and a free re-spot of the ball. GAME shows the controlled side only. */
 export function PracticeBooks() {
   const ui = useSyncExternalStore(subscribePractice, readPractice);
+  const board = useSyncExternalStore(subscribeBoard, readBoard);
   const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
-  if (ui.mode !== "practice") return null;
-  const offJersey = kitById(kits.offId).jersey;
-  const defJersey = kitById(kits.defId).jersey;
-  return (
+  const hidePreviews = board.replay && (ui.mode === "practice" || board.mode === "game");
+  if (ui.mode === "practice") {
+    const userSide = board.side === "def" ? "def" : "off";
+    const offJersey = kitById(kitIdForSquad("off", userSide, kits)).jersey;
+    const defJersey = kitById(kitIdForSquad("def", userSide, kits)).jersey;
+    const homePrimary = kitById(kits.offId).endPrimary;
+    return (
     <div aria-label="Practice play previews" style={wrap}>
       <div style={losPanel}>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -167,7 +186,7 @@ export function PracticeBooks() {
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={beginPracticeRespot}
-            style={spotButton}
+            style={spotButtonStyle(homePrimary)}
           >
             RE-SPOT BALL
           </button>
@@ -176,14 +195,23 @@ export function PracticeBooks() {
               type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={confirmPracticeRespot}
-              style={{ ...spotButton, background: "#fb4f14" }}
+              style={spotButtonStyle(homePrimary, true)}
             >
               CONFIRM
             </button>
           ) : null}
         </div>
       </div>
-      <div style={row}>
+      {hidePreviews ? null : (
+      <div style={bookStack}>
+        <Book
+          side="def"
+          jersey={defJersey}
+          index={ui.schemeIndex}
+          names={DEF_SCHEMES.map((scheme) => scheme.name)}
+          diagram={ui.diagram}
+          onPick={setPracticeScheme}
+        />
         <Book
           side="off"
           jersey={offJersey}
@@ -192,13 +220,25 @@ export function PracticeBooks() {
           diagram={ui.diagram}
           onPick={setPracticePlay}
         />
+      </div>
+      )}
+    </div>
+  );
+  }
+  if (board.mode !== "game" || hidePreviews) return null;
+  const side = board.side === "def" ? "def" : "off";
+  const jersey = kitById(side === "off" ? kits.offId : kits.defId).jersey;
+  const names = side === "off" ? OFF_PLAYS.map((play) => play.name) : DEF_SCHEMES.map((scheme) => scheme.name);
+  return (
+    <div aria-label={side === "off" ? "Offense play preview" : "Defense play preview"} style={wrap}>
+      <div style={row}>
         <Book
-          side="def"
-          jersey={defJersey}
-          index={ui.schemeIndex}
-          names={DEF_SCHEMES.map((scheme) => scheme.name)}
+          side={side}
+          jersey={jersey}
+          index={readArmedCallIndex(side)}
+          names={names}
           diagram={ui.diagram}
-          onPick={setPracticeScheme}
+          onPick={setGameUserCall}
         />
       </div>
     </div>

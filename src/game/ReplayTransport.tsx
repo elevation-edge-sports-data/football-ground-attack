@@ -7,12 +7,13 @@ import {
   toggleReplayButton,
 } from "./replayHold";
 import { pressTapeShuttle, releaseTapeShuttle, toggleTapePlay } from "./tapeReplay";
+import { getUniformSelection, kitById, subscribeUniforms } from "./uniforms";
 
 type IconName = "fast-rewind" | "slow-rewind" | "play" | "pause" | "slow-forward" | "fast-forward";
 
 const row: CSSProperties = {
   position: "fixed",
-  left: 12,
+  right: 12,
   bottom: 54,
   zIndex: 31,
   display: "flex",
@@ -20,7 +21,7 @@ const row: CSSProperties = {
   pointerEvents: "auto",
 };
 
-function buttonStyle(on: boolean, disabled: boolean): CSSProperties {
+function buttonStyle(on: boolean, disabled: boolean, accent: string): CSSProperties {
   return {
     width: 44,
     height: 44,
@@ -30,9 +31,9 @@ function buttonStyle(on: boolean, disabled: boolean): CSSProperties {
     placeItems: "center",
     borderRadius: 6,
     border: "1px solid",
-    borderColor: on ? "#fb4f14" : "#243040",
+    borderColor: on ? accent : "#243040",
     background: "#171e28",
-    color: on ? "#fb4f14" : "#e8ece6",
+    color: on ? accent : "#e8ece6",
     cursor: disabled ? "default" : "pointer",
     opacity: disabled ? 0.4 : 1,
   };
@@ -82,6 +83,7 @@ function ShuttleButton({
   rate,
   on,
   disabled,
+  accent,
   onPress,
   onRelease,
 }: {
@@ -90,6 +92,7 @@ function ShuttleButton({
   rate: number;
   on: boolean;
   disabled: boolean;
+  accent: string;
   onPress: (rate: number) => void;
   onRelease: (rate: number) => void;
 }) {
@@ -100,7 +103,7 @@ function ShuttleButton({
       aria-pressed={on}
       disabled={disabled}
       tabIndex={-1}
-      style={buttonStyle(on, disabled)}
+      style={buttonStyle(on, disabled, accent)}
       onMouseDown={(event) => event.preventDefault()}
       onPointerDown={(event) => {
         if (event.button !== 0 || disabled) return;
@@ -119,6 +122,7 @@ function ShuttleButton({
 /** Five icon buttons just above the replay scrubber. Hidden once replay closes. */
 export function ReplayTransport() {
   const transport = useSyncExternalStore(subscribeReplayTransport, readReplayTransport);
+  const accent = kitById(useSyncExternalStore(subscribeUniforms, getUniformSelection).offId).endPrimary;
   if (transport.kind === "off") return null;
   const tape = transport.kind === "tape";
   const press = tape ? pressTapeShuttle : pressReplayRate;
@@ -128,15 +132,15 @@ export function ReplayTransport() {
   const shuttleOn = (rate: number) => Math.abs(transport.shuttle - rate) < 0.01;
   return (
     <div style={row} role="group" aria-label="Replay transport">
-      <ShuttleButton label="Fast rewind" icon="fast-rewind" rate={-3.4} on={shuttleOn(-3.4)} disabled={locked} onPress={press} onRelease={release} />
-      <ShuttleButton label="Slow rewind" icon="slow-rewind" rate={-0.28} on={shuttleOn(-0.28)} disabled={locked} onPress={press} onRelease={release} />
+      <ShuttleButton label="Fast rewind" icon="fast-rewind" rate={-3.4} on={shuttleOn(-3.4)} disabled={locked} accent={accent} onPress={press} onRelease={release} />
+      <ShuttleButton label="Slow rewind" icon="slow-rewind" rate={-0.28} on={shuttleOn(-0.28)} disabled={locked} accent={accent} onPress={press} onRelease={release} />
       <button
         type="button"
         aria-label="Play/pause"
         aria-pressed={transport.playing}
         disabled={locked}
         tabIndex={-1}
-        style={buttonStyle(false, locked)}
+        style={buttonStyle(false, locked, accent)}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           if (!locked) toggle();
@@ -144,8 +148,8 @@ export function ReplayTransport() {
       >
         <TransportIcon name={transport.playing ? "pause" : "play"} />
       </button>
-      <ShuttleButton label="Slow forward" icon="slow-forward" rate={0.28} on={shuttleOn(0.28)} disabled={locked} onPress={press} onRelease={release} />
-      <ShuttleButton label="Fast forward" icon="fast-forward" rate={3.4} on={shuttleOn(3.4)} disabled={locked} onPress={press} onRelease={release} />
+      <ShuttleButton label="Slow forward" icon="slow-forward" rate={0.28} on={shuttleOn(0.28)} disabled={locked} accent={accent} onPress={press} onRelease={release} />
+      <ShuttleButton label="Fast forward" icon="fast-forward" rate={3.4} on={shuttleOn(3.4)} disabled={locked} accent={accent} onPress={press} onRelease={release} />
     </div>
   );
 }

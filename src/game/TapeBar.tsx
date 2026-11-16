@@ -1,17 +1,26 @@
 import { useRef, useSyncExternalStore, type CSSProperties } from "react";
+import { downloadFormationFrame, downloadReplayFrames } from "./formationDownload";
 import {
   beginTape,
+  exportTapeFrame,
+  exportTapeRange,
+  markTapeRange,
   readTapeLocked,
   readTapeOn,
-  readTapePlaying,
   readTapeReady,
+  redoTapeEdit,
   seekTape,
   stopTape,
   subscribeTape,
+  subscribeTapeEdit,
   subscribeTapeReady,
   tapeFraction,
   tapeFrameIndex,
+  tapeRangeMarkPcts,
+  tapeRedoDepth,
+  tapeUndoDepth,
   toggleTapeLock,
+  undoTapeEdit,
 } from "./tapeReplay";
 
 const bar: CSSProperties = {
@@ -51,6 +60,40 @@ const frameStyle: CSSProperties = {
   color: "#f4f7fb",
 };
 
+const replayPanel: CSSProperties = {
+  position: "fixed",
+  left: "50%",
+  bottom: 54,
+  transform: "translateX(-50%)",
+  zIndex: 32,
+  width: "min(760px, calc(100vw - 520px))",
+  padding: "8px 10px",
+  borderRadius: 8,
+  background: "rgba(12, 18, 28, 0.92)",
+  border: "1px solid #fb4f14",
+  display: "grid",
+  gap: 6,
+  boxSizing: "border-box",
+  textAlign: "left",
+  pointerEvents: "auto",
+};
+
+const replayTitle: CSSProperties = {
+  margin: 0,
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 15,
+  fontWeight: 700,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  color: "#fb4f14",
+};
+
+const replayRow: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+};
+
 function buttonStyle(on: boolean): CSSProperties {
   return {
     minHeight: 32,
@@ -67,12 +110,65 @@ function buttonStyle(on: boolean): CSSProperties {
   };
 }
 
+function replayButtonStyle(primary: boolean, disabled: boolean): CSSProperties {
+  return {
+    flex: "1 1 auto",
+    minHeight: 36,
+    padding: "0 12px",
+    borderRadius: 6,
+    border: primary ? "1px solid #ffffff" : "1px solid #243040",
+    background: primary ? "#ffffff" : "#171e28",
+    color: primary ? "#070b12" : "#e8ece6",
+    fontFamily: '"Barlow Condensed", sans-serif',
+    fontSize: 15,
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.4 : 1,
+    whiteSpace: "nowrap",
+  };
+}
+
+function blockSpace(event: { code: string; preventDefault: () => void }) {
+  if (event.code === "Space") event.preventDefault();
+}
+
+function ReplayButton({
+  label,
+  primary = false,
+  disabled = false,
+  pressed = false,
+  onClick,
+}: {
+  label: string;
+  primary?: boolean;
+  disabled?: boolean;
+  pressed?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed ? true : undefined}
+      disabled={disabled}
+      tabIndex={-1}
+      onKeyDown={blockSpace}
+      onClick={onClick}
+      style={replayButtonStyle(primary, disabled)}
+    >
+      {label}
+    </button>
+  );
+}
+
 /** Full-width scrubber. The frame number sits to the right of the track. */
 export function TapeBar() {
   const open = useSyncExternalStore(subscribeTape, readTapeOn);
   const locked = useSyncExternalStore(subscribeTape, readTapeLocked);
   const fraction = useSyncExternalStore(subscribeTape, tapeFraction);
   const frame = useSyncExternalStore(subscribeTape, tapeFrameIndex);
+  const marks = useSyncExternalStore(subscribeTape, tapeRangeMarkPcts);
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef(false);
   if (!open) return null;
@@ -100,9 +196,6 @@ export function TapeBar() {
       aria-valuetext={`frame ${frame}`}
       aria-disabled={locked}
     >
-      <button type="button" aria-pressed={locked} onClick={toggleTapeLock} style={buttonStyle(locked)}>
-        {locked ? "Revert" : "Lock"}
-      </button>
       <div
         ref={track}
         style={{ ...trackStyle, pointerEvents: locked ? "none" : "auto", cursor: locked ? "default" : "pointer" }}
@@ -124,7 +217,23 @@ export function TapeBar() {
         }}
       >
         <div style={{ position: "relative", height: "100%", overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${shown}%`, background: "#5a1021" }} />
+          <div style={{ height: "100%", width: `${shown}%`, background: "#FA4616" }} />
+          {marks.map((markPct, index) => (
+            <span
+              key={index}
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: `${markPct * 100}%`,
+                width: 2,
+                height: "100%",
+                background: "#f4f4f4",
+                transform: "translateX(-50%)",
+                pointerEvents: "none",
+              }}
+            />
+          ))}
         </div>
       </div>
       <span style={frameStyle}>{frame}</span>
@@ -132,28 +241,54 @@ export function TapeBar() {
   );
 }
 
-/** Pause-menu replay entry, and the exit control once the tape is open. */
+function downloadLockedFrame() {
+  const frame = exportTapeFrame();
+  if (frame) downloadFormationFrame(frame);
+}
+
+function downloadMarkedRange() {
+  const frames = exportTapeRange();
+  if (frames?.length) downloadReplayFrames(frames);
+}
+
+/** Lower-middle replay actions. Mounted outside the scoreboard so it sits above the scrubber. */
+export function ReplayActionPanel() {
+  const open = useSyncExternalStore(subscribeTape, readTapeOn);
+  const locked = useSyncExternalStore(subscribeTapeEdit, readTapeLocked);
+  const undo = useSyncExternalStore(subscribeTapeEdit, tapeUndoDepth);
+  const redo = useSyncExternalStore(subscribeTapeEdit, tapeRedoDepth);
+  const marks = useSyncExternalStore(subscribeTape, tapeRangeMarkPcts);
+  if (!open) return null;
+  return (
+    <div style={replayPanel} role="region" aria-label="Replay">
+      <p style={replayTitle}>Replay</p>
+      <div style={replayRow}>
+        <ReplayButton
+          label={locked ? "Revert" : "Edit formation"}
+          primary={locked}
+          pressed={locked}
+          onClick={toggleTapeLock}
+        />
+        <ReplayButton label="Mark" onClick={markTapeRange} />
+        <ReplayButton label="Download replay" disabled={marks.length < 2} onClick={downloadMarkedRange} />
+        <ReplayButton label="Download formation" disabled={!locked} onClick={downloadLockedFrame} />
+        {locked ? (
+          <>
+            <ReplayButton label="Undo" disabled={undo === 0} onClick={undoTapeEdit} />
+            <ReplayButton label="Redo" disabled={redo === 0} onClick={redoTapeEdit} />
+          </>
+        ) : null}
+        <ReplayButton label="Exit" primary onClick={stopTape} />
+      </div>
+    </div>
+  );
+}
+
+/** Pause-card replay entry. The action panel is separate, above the scrubber. */
 export function PauseTapeControls() {
   const open = useSyncExternalStore(subscribeTape, readTapeOn);
   const ready = useSyncExternalStore(subscribeTapeReady, readTapeReady);
-  const playing = useSyncExternalStore(subscribeTape, readTapePlaying);
-  if (open) {
-    return (
-      <>
-        <div style={{ fontSize: 14, opacity: 0.75 }}>
-          {playing ? "Playing" : "Paused"} · R, Select, Esc, or right-stick click returns here
-        </div>
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 8, pointerEvents: "auto" }}>
-          <button type="button" onClick={stopTape} style={buttonStyle(false)}>
-            Exit
-          </button>
-        </div>
-        <div style={{ fontSize: 13, opacity: 0.75, marginTop: 4, pointerEvents: "none" }}>
-          A/Space play · X/B zoom · WASD pan · right stick orbits · arrows or left stick move the X · Y next player or the ball · LB/RB slow · G/Shift or LT/RT fast · Lock freezes the frame
-        </div>
-      </>
-    );
-  }
+  if (open) return null;
   return (
     <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 8, pointerEvents: "auto" }}>
       <button

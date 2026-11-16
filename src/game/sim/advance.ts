@@ -23,7 +23,8 @@ import type { AssignedPlay, AssignedPlayer, ReplayFrame } from "./assign";
 import { contactOf, resolveBlockContact, resolveTackle, tickContact } from "./contact";
 import { bodyTravelScale, setUserOnOffense } from "./tuning";
 import { attackSign, downfieldDelta, furtherDownfield, shiftDownfield } from "./attack";
-import { consumeDefenseFinish, readUserDefenderId, tickDefenseLive, userTackleScale, type DefenseStick } from "./defense";
+import { readPlaySide } from "./boot";
+import { consumeDefenseFinish, poseForReplay, readUserDefenderId, tickDefenseLive, userTackleScale, type DefenseStick } from "./defense";
 import { flushStanceReleases, releaseStance } from "./stance";
 import type { BlockAssignment, ContactResult, DefenseAssignment, PlayAssignment, RouteAssignment } from "./types";
 
@@ -418,6 +419,7 @@ function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
     pose: sim.pose,
     ballX: sim.ballX,
     ballYard: sim.ballYard,
+    side: readPlaySide(),
     players: sim.players.map((player) => ({
       id: player.id,
       x: player.x,
@@ -425,6 +427,7 @@ function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
       hop: player.hop,
       facingX: player.facingX,
       facingYard: player.facingYard,
+      pose: poseForReplay(player, sim.pose),
     })),
   });
   const newest = tape.frames[tape.frames.length - 1];
@@ -465,6 +468,7 @@ export function sampleReplay(frames: readonly ReplayFrame[], age: number): Repla
     pose: t < 0.5 ? before.pose : after.pose,
     ballX: before.ballX + (after.ballX - before.ballX) * t,
     ballYard: before.ballYard + (after.ballYard - before.ballYard) * t,
+    side: t < 0.5 ? before.side : after.side,
     players: before.players.map((left) => {
       const right = nextById.get(left.id);
       if (!right) return left;
@@ -478,6 +482,7 @@ export function sampleReplay(frames: readonly ReplayFrame[], age: number): Repla
         hop: left.hop + (right.hop - left.hop) * t,
         facingX: facingX / mag,
         facingYard: facingYard / mag,
+        pose: t < 0.5 ? (left.pose ?? null) : (right.pose ?? left.pose ?? null),
       };
     }),
   };

@@ -1,4 +1,5 @@
 import { FIELD } from "../field/spec";
+import { readAttackNorth } from "./sim/attack";
 
 /**
  * Ball-carrier path from the v10 canvas (`runnerTrail` / `strokeTrailWorld`).
@@ -9,6 +10,7 @@ import { FIELD } from "../field/spec";
  * The path is the whole play, capped at 600 points so the oldest fall off.
  * A new snap clears it. Replay keeps the prefix recorded by the scrubbed time.
  * Yard is clamped to the goal line, and a score seals the path on that plane.
+ * The whistle seals or pins once. Later frames leave that polyline alone.
  */
 const MIN_STEP = 0.15;
 const SAMPLE_S = 0.04;
@@ -42,12 +44,24 @@ export function resetRunnerTrail(trail: RunnerTrail) {
   trail.clock = 0;
 }
 
-function pushPoint(trail: RunnerTrail, x: number, yard: number, age: number) {
-  const y = Math.min(GOAL, yard);
+/** North scores stop at yard 100. South scores stop at yard 0. */
+function clampAttackYard(yard: number, north = readAttackNorth()): number {
+  return north ? Math.min(GOAL, yard) : Math.max(0, yard);
+}
+
+function nearAttackGoal(yard: number, north = readAttackNorth()): boolean {
+  return north ? yard >= 96 : yard <= GOAL - 96;
+}
+
+function pushStored(trail: RunnerTrail, x: number, yard: number, age: number) {
   const last = trail.points[trail.points.length - 1];
-  if (last && Math.hypot(x - last.x, y - last.yard) < 1e-4) return;
-  trail.points.push({ x, yard: y, age });
+  if (last && Math.hypot(x - last.x, yard - last.yard) < 1e-4) return;
+  trail.points.push({ x, yard, age });
   if (trail.points.length > MAX_POINTS) trail.points.shift();
+}
+
+function pushPoint(trail: RunnerTrail, x: number, yard: number, age: number) {
+  pushStored(trail, x, clampAttackYard(yard), age);
 }
 
 /** One live sample. `fast` is a dive, which matches the canvas 0.016s gate. */
@@ -60,10 +74,11 @@ export function sampleRunnerTrail(
   fast: boolean,
 ) {
   trail.acc += dt;
-  const y = Math.min(GOAL, yard);
+  const north = readAttackNorth();
+  const y = clampAttackYard(yard, north);
   const last = trail.points[trail.points.length - 1];
   const moved = !last || Math.hypot(x - last.x, y - last.yard) > MIN_STEP;
-  const nearGoal = yard >= 96;
+  const nearGoal = nearAttackGoal(yard, north);
   const minT = fast || nearGoal ? SAMPLE_FAST_S : SAMPLE_S;
   if ((moved || nearGoal) && trail.acc > minT) {
     pushPoint(trail, x, y, age);
@@ -71,28 +86,38 @@ export function sampleRunnerTrail(
   }
 }
 
-/** Tackle or sideline: the path reaches the whistle spot. */
-export function pinRunnerTrail(trail: RunnerTrail, x: number, yard: number, age: number) {
-  pushPoint(trail, x, yard, age);
+/**
+ * Tackle or sideline: the path reaches the whistle spot.
+ * `north` is the attack direction at the snap of this play. A quarter flip
+ * in the same frame must not pull the spot onto the other goal.
+ */
+export function pinRunnerTrail(trail: RunnerTrail, x: number, yard: number, age: number, north = readAttackNorth()) {
+  pushStored(trail, x, clampAttackYard(yard, north), age);
   trail.acc = 0;
 }
 
-/** Touchdown: fill the gap so the path meets the goal line. Canvas `scoreTouchdown`. */
-export function sealRunnerTrail(trail: RunnerTrail, x: number, yard: number, age: number) {
+/**
+ * Touchdown: fill a short gap so the path meets the goal the runner reached.
+ * Canvas `scoreTouchdown`, mirrored when the offense is attacking south.
+ * The last point is the runner's x on that goal line.
+ */
+export function sealRunnerTrail(trail: RunnerTrail, x: number, yard: number, age: number, north = readAttackNorth()) {
+  const plane = north ? GOAL : 0;
   for (const point of trail.points) {
-    if (point.yard > GOAL) point.yard = GOAL;
+    if (north ? point.yard > GOAL : point.yard < 0) point.yard = plane;
   }
   const last = trail.points[trail.points.length - 1];
   const x0 = last ? last.x : x;
-  const y0 = last ? last.yard : Math.min(GOAL, yard);
-  if (!last || y0 < SEAL_GAP) {
+  const y0 = last ? last.yard : clampAttackYard(yard, north);
+  const short = north ? y0 < SEAL_GAP : y0 > GOAL - SEAL_GAP;
+  if (!last || short) {
     const steps = 4;
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      pushPoint(trail, x0 + (x - x0) * t, y0 + (GOAL - y0) * t, age);
+      pushStored(trail, x0 + (x - x0) * t, y0 + (plane - y0) * t, age);
     }
   } else {
-    pushPoint(trail, x, GOAL, age);
+    pushStored(trail, x, plane, age);
   }
   trail.acc = 0;
 }
@@ -101,6 +126,7 @@ export function sealRunnerTrail(trail: RunnerTrail, x: number, yard: number, age
  * Points to stroke, oldest first.
  * `clipAge` is the replay scrub. Null shows the whole play.
  * `tip` is the carrier right now, so the line meets their feet between samples.
+ * Pass null once the play is over so the sealed path stays put.
  */
 export function collectTrail(
   trail: RunnerTrail,
@@ -118,7 +144,7 @@ export function collectTrail(
 }
 
 function pushDraw(out: { x: number; yard: number }[], x: number, yard: number) {
-  const y = Math.min(GOAL, yard);
+  const y = clampAttackYard(yard);
   const last = out[out.length - 1];
   if (last && Math.hypot(x - last.x, y - last.yard) < 1e-4) return;
   out.push({ x, yard: y });

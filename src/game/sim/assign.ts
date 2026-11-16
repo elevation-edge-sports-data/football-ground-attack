@@ -139,6 +139,8 @@ export type ReplaySample = {
   hop: number;
   facingX: number;
   facingYard: number;
+  /** Pose on this player at the sample. Null is the bind pose. */
+  pose?: string | null;
 };
 
 export type ReplayFrame = {
@@ -148,6 +150,8 @@ export type ReplayFrame = {
   /** Football at this sample. The scrub lock can sit on it, apart from any player. */
   ballX: number;
   ballYard: number;
+  /** User role when the sample was taken. Kits stay with that play. */
+  side?: "off" | "def";
   players: ReplaySample[];
 };
 

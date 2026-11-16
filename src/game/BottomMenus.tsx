@@ -10,8 +10,9 @@ import {
   type EzArtId,
   type EzTone,
 } from "./fieldLook";
-import { ModeToggle, PlaySideButton } from "./ModeToggle";
+import { HomeAwayButton, ModeToggle, PlaySideButton } from "./ModeToggle";
 import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
+import { readYouHome } from "./sim/attack";
 import {
   readTuning,
   setBreakBlock,
@@ -123,11 +124,12 @@ export function BottomMenus() {
   };
   const toggleField = (id: FieldPanel) => setFieldPanel((cur) => (cur === id ? null : id));
   return (
-    <div style={{ ...dock, bottom: tape || board.replay ? 112 : 16 }}>
+    <div style={{ ...dock, bottom: tape || board.replay ? 54 : 16 }}>
       <div style={stack}>
         {menu === "settings" ? <SettingsPanel /> : null}
         <div style={row}>
           <ModeToggle mode={board.mode} embedded />
+          {board.mode === "game" ? null : <HomeAwayButton home={readYouHome()} />}
           {board.mode === "game" ? null : <PlaySideButton side={board.side} />}
           <button
             type="button"

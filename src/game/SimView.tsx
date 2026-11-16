@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useSyncExternalStore } from "react";
-import { DoubleSide, Raycaster, Vector2, Vector3, type Camera, type Group, type Mesh, type Object3D } from "three";
+import { DoubleSide, MeshBasicMaterial, Raycaster, Vector2, Vector3, type Camera, type Group, type Mesh, type Object3D } from "three";
 import { FIELD, NORTH_BACK, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, SOUTH_BACK } from "../field/spec";
 import { readAttackNorth } from "./sim/attack";
+import { readCameraCenter, setCameraCenter } from "./cameraCenter";
+import { readCamMode } from "./cameraMode";
 import { followTarget, setFollowTarget } from "./cameraFollow";
 import { footballLeadingTip } from "./ballTip";
 import { worldFromField, yawFromFacing } from "./frame";
@@ -13,6 +15,7 @@ import { RespotMarker } from "./RespotMarker";
 import { basicMove, isMoveCode, PAUSE_KEY, radialDeadzone, readBasicPad, readBlockerStick, readClassicStiff, readPadButton, readRawDefense, readReplayPad, readRightStick, readRightStickClick } from "./input";
 import { poseCarriesBall } from "./PoseEditor";
 import {
+  aimTapeSelection,
   cycleTapeSelect,
   endTapeNudge,
   noteTape,
@@ -22,6 +25,7 @@ import {
   readTapePlaying,
   readTapeSelected,
   redoTapeEdit,
+  selectTapeBody,
   slideTapeSelection,
   readTapeHeldScrub,
   stepTape,
@@ -47,13 +51,13 @@ import { replayFocus, replayFocusJump } from "./replayCamera";
 import { sampleReplay, stepAssignments } from "./sim/advance";
 import { stanceOf, stanceRevision, subscribeStances } from "./sim/stance";
 import { randomizeFieldForNewGame } from "./fieldLook";
-import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPendingFirstDownYard, readPendingLos, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
+import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onReset, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPendingFirstDownYard, readPendingLos, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
 import { beginDefenseHuddle, beginDefenseLive, readUserDefenderId, readUserDefPose, tickDefenseHuddle, type DefenseStick } from "./sim/defense";
 import { runnerBounds } from "./sideline";
 import { controlledPlayer, createSim, step, type Player, type Sim } from "./sim";
 import { setUserOnOffense } from "./sim/tuning";
 import type { AssignedPlay } from "./sim/assign";
-import { PLAYER_NUMBERS, getUniformSelection, kitById, subscribeUniforms } from "./uniforms";
+import { PLAYER_NUMBERS, getUniformSelection, kitById, kitIdForSquad, subscribeUniforms } from "./uniforms";
 
 const JERSEY: Record<string, number[]> = {
   QB: [12],
@@ -128,9 +132,22 @@ function isFocusMark(object: Object3D): boolean {
   return false;
 }
 
-/** Burgundy X at the replay camera's look point. Hidden once replay closes. */
+/** Above the midfield logo (y 0.05) and the end-zone art. */
+const MARK_Y = 0.062;
+
+function teamPrimary(team: "off" | "def", playSide?: "off" | "def"): string {
+  return kitById(kitIdForSquad(team, playSide ?? readPlaySide())).endPrimary;
+}
+
+function tintRing(mesh: Mesh, team: "off" | "def", playSide?: "off" | "def") {
+  const mat = mesh.material;
+  if (mat instanceof MeshBasicMaterial) mat.color.set(teamPrimary(team, playSide));
+}
+
+/** Home secondary X at the replay camera's look point. Hidden once replay closes. */
 function ReplayFocusMark() {
   const ref = useRef<Group>(null);
+  const homeSecondary = kitById(useSyncExternalStore(subscribeUniforms, getUniformSelection).offId).endSecondary;
   useFrame(() => {
     const mark = ref.current;
     if (!mark) return;
@@ -140,24 +157,62 @@ function ReplayFocusMark() {
   });
   return (
     <group ref={ref} name="replay-focus" visible={false} frustumCulled={false}>
-      <mesh rotation={[0, Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
+      <mesh renderOrder={8} rotation={[0, Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
         <boxGeometry args={[1.9, 0.02, 0.28]} />
-        <meshBasicMaterial color="#000a40" toneMapped={false} />
+        <meshBasicMaterial color="#000a40" toneMapped={false} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-64} polygonOffsetUnits={-64} />
       </mesh>
-      <mesh rotation={[0, -Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
+      <mesh renderOrder={8} rotation={[0, -Math.PI / 4, 0]} position={[0, -0.01, 0]} raycast={() => null}>
         <boxGeometry args={[1.9, 0.02, 0.28]} />
-        <meshBasicMaterial color="#000a40" toneMapped={false} />
+        <meshBasicMaterial color="#000a40" toneMapped={false} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-64} polygonOffsetUnits={-64} />
       </mesh>
-      <mesh rotation={[0, Math.PI / 4, 0]} raycast={() => null}>
+      <mesh renderOrder={8} rotation={[0, Math.PI / 4, 0]} raycast={() => null}>
         <boxGeometry args={[1.75, 0.035, 0.16]} />
-        <meshBasicMaterial color="#001489" toneMapped={false} />
+        <meshBasicMaterial color={homeSecondary} toneMapped={false} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-64} polygonOffsetUnits={-64} />
       </mesh>
-      <mesh rotation={[0, -Math.PI / 4, 0]} raycast={() => null}>
+      <mesh renderOrder={8} rotation={[0, -Math.PI / 4, 0]} raycast={() => null}>
         <boxGeometry args={[1.75, 0.035, 0.16]} />
-        <meshBasicMaterial color="#001489" toneMapped={false} />
+        <meshBasicMaterial color={homeSecondary} toneMapped={false} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-64} polygonOffsetUnits={-64} />
       </mesh>
     </group>
   );
+}
+
+/** Center of the X has to sit on the player or the shadow under him. */
+const X_ON_PLAYER = 0.8;
+/** A body that moved more than this since the last frame is not standing still. */
+const PLAYER_STILL = 0.02;
+
+/**
+ * The X was moved onto a player who did not move. A runner who crosses a
+ * resting X does not take the lock, because his position changed.
+ */
+function stillPlayerIndex<T extends { id: string; x: number; yard: number }>(
+  spot: FieldSpot,
+  players: readonly T[],
+  prev: ReadonlyMap<string, FieldSpot>,
+): number {
+  let best = -1;
+  let bestD = X_ON_PLAYER;
+  for (let i = 0; i < players.length; i += 1) {
+    const player = players[i]!;
+    const was = prev.get(player.id);
+    if (!was) continue;
+    if (Math.hypot(player.x - was.x, player.yard - was.yard) > PLAYER_STILL) continue;
+    const dist = Math.hypot(player.x - spot.x, player.yard - spot.yard);
+    if (dist <= bestD) {
+      bestD = dist;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function rememberPlayers<T extends { id: string; x: number; yard: number }>(
+  prev: Map<string, FieldSpot>,
+  players: readonly T[],
+) {
+  prev.clear();
+  for (const player of players) prev.set(player.id, { x: player.x, yard: player.yard });
 }
 
 /** Triggers scrub fast. Bumpers scrub slow. Shift is fast forward. Arrows move the X. */
@@ -173,11 +228,17 @@ function tapeScrub(keys: ReadonlySet<string>): TapeScrub {
 
 /**
  * Camera-relative step for the replay X. Arrows are full deflection.
- * The left stick adds in, unless a locked tape frame is already using it to slide a player.
+ * A locked player takes the arrows and the left stick, so neither also slides the X.
  */
-function markPan(keys: ReadonlySet<string>, camera: Camera, dt: number, allowStick: boolean): { x: number; yard: number } | null {
-  let sx = (keys.has("ArrowRight") ? 1 : 0) - (keys.has("ArrowLeft") ? 1 : 0);
-  let sy = (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0);
+function markPan(
+  keys: ReadonlySet<string>,
+  camera: Camera,
+  dt: number,
+  allowStick: boolean,
+  allowArrows = true,
+): { x: number; yard: number } | null {
+  let sx = allowArrows ? (keys.has("ArrowRight") ? 1 : 0) - (keys.has("ArrowLeft") ? 1 : 0) : 0;
+  let sy = allowArrows ? (keys.has("ArrowUp") ? 1 : 0) - (keys.has("ArrowDown") ? 1 : 0) : 0;
   if (allowStick) {
     const pad = readBasicPad();
     if (pad) {
@@ -253,7 +314,25 @@ function defenseStick(keys: ReadonlySet<string>, camera: Camera): DefenseStick {
   };
 }
 
+/** Ground part of a camera axis. Vertical is dropped so High's horizontal up still steers. */
+function groundUnit(x: number, z: number) {
+  const mag = Math.hypot(x, z);
+  if (mag < 1e-8) return { x: 0, z: 0 };
+  return { x: x / mag, z: z / mag };
+}
+
 function steerFromCamera(screenRight: number, screenUp: number, camera: Camera) {
+  // High looks straight down. Screen-up is camera.up (the attack goal), not the look direction.
+  if (readCamMode() === "high" || Math.abs(camera.up.y) < 0.5) {
+    camera.updateMatrixWorld();
+    const e = camera.matrixWorld.elements;
+    const right = groundUnit(e[0] ?? 0, e[2] ?? 0);
+    const up = groundUnit(e[4] ?? 0, e[6] ?? 0);
+    return {
+      x: screenRight * right.x + screenUp * up.x,
+      yard: -(screenRight * right.z + screenUp * up.z),
+    };
+  }
   camera.getWorldDirection(_camForward);
   _camForward.y = 0;
   if (_camForward.lengthSq() < 1e-8) {
@@ -283,10 +362,10 @@ function PlayerMesh({
   pose?: string;
   carry?: boolean;
   mark?: boolean;
-  /** GAME only. The user stays the home kit while the away squad has the ball. */
+  /** The user is on defense, so the home kit is on that squad. */
   homeOnDefense?: boolean;
 }) {
-  const homeSquad = homeOnDefense ? player.team === "def" : player.team === "off";
+  const userSide = homeOnDefense ? "def" : "off";
   return (
     <group
       ref={(node) => {
@@ -299,7 +378,7 @@ function PlayerMesh({
       rotation={[0, yawFromFacing(player.facingX, player.facingYard), 0]}
     >
       <PlayerFigure
-        kit={kitById(homeSquad ? kits.offId : kits.defId)}
+        kit={kitById(kitIdForSquad(player.team === "def" ? "def" : "off", userSide, kits))}
         number={jerseyNumber(player)}
         controlled={player.controlled}
         pose={pose}
@@ -344,9 +423,11 @@ export function SimView() {
   const [carrierPose, setCarrierPose] = useState(sim.current.pose);
   const losLine = useRef<Mesh>(null);
   const firstDownLine = useRef<Mesh>(null);
-  const replay = useRef({ on: false, age: 0, rate: 1, playing: false, lock: -1, yWas: false, yMoved: false, spot: null as FieldSpot | null });
+  const replay = useRef({ on: false, age: 0, rate: 1, playing: false, lock: -1, yWas: false, yMoved: false, nudged: false, pullFrom: -1, latched: -1, spot: null as FieldSpot | null });
   const scrubLive = useRef(false);
-  const tapeLook = useRef({ open: false, lock: -1, yWas: false, yMoved: false, spot: null as FieldSpot | null });
+  const tapeLook = useRef({ open: false, lock: -1, yWas: false, yMoved: false, nudged: false, pullFrom: -1, latched: -1, spot: null as FieldSpot | null });
+  const tapeStill = useRef(new Map<string, FieldSpot>());
+  const playStill = useRef(new Map<string, FieldSpot>());
   const footageOn = useRef(false);
   /**
    * The press that arms a play is still down. Ignore it until it releases,
@@ -357,6 +438,8 @@ export function SimView() {
   const lineupWait = useRef(0);
   const huddlePlay = useRef<AssignedPlay | null>(null);
   const userRing = useRef<Mesh>(null);
+  /** Already on defense. Entering defense puts the camera back on the ball carrier. */
+  const defenseCam = useRef(readPlaySide() === "def");
   const defStamp = useRef("");
   const [defRev, setDefRev] = useState(0);
   const trail = useRef(createRunnerTrail());
@@ -465,9 +548,23 @@ export function SimView() {
     mountPlay(next);
     if (next.dead) sim.current.playOver = true;
   });
+  const resetSession = useRef(() => {
+    if (preview.current) return;
+    replay.current.on = false;
+    setReplayMode(false);
+    if (readTapeOn()) stopTape();
+    const next = bootFullPlay(false);
+    mountPlay(next);
+    console.log("Reset", {
+      play: next.assigned.play.name,
+      scheme: next.assigned.scheme.name,
+      players: sim.current.players.length,
+    });
+  });
   useLayoutEffect(() => onModeStage(() => applyStage.current()), []);
   useLayoutEffect(() => onNextPlay(() => goNext.current()), []);
   useLayoutEffect(() => onRestart(() => restartGame.current()), []);
+  useLayoutEffect(() => onReset(() => resetSession.current()), []);
   useLayoutEffect(() => onReplayToggle(() => toggleReplay.current()), []);
   useEffect(() => {
     return bindReplaySeek((fraction) => {
@@ -602,9 +699,21 @@ export function SimView() {
     const down = (event: PointerEvent) => {
       if (!readTapeLocked() || event.button !== 0 || event.target !== gl.domElement) return;
       const rect = gl.domElement.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      camera.updateMatrixWorld();
       _ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       _ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       _ray.setFromCamera(_ndc, camera);
+      const hits = _ray.intersectObjects(scene.children, true);
+      for (const hit of hits) {
+        if (isFocusMark(hit.object)) continue;
+        if (hit.object.type === "Line2" || hit.object.parent?.type === "Line2") continue;
+        const picked = ownerId(hit.object, bodies.current);
+        if (picked) {
+          selectTapeBody(picked);
+          return;
+        }
+      }
       if (Math.abs(_ray.ray.direction.y) < 1e-5) return;
       const t = -_ray.ray.origin.y / _ray.ray.direction.y;
       if (!(t >= 0)) return;
@@ -612,7 +721,7 @@ export function SimView() {
     };
     gl.domElement.addEventListener("pointerdown", down);
     return () => gl.domElement.removeEventListener("pointerdown", down);
-  }, [camera, gl]);
+  }, [camera, gl, scene]);
 
   useEffect(() => {
     let tracking = false;
@@ -635,6 +744,9 @@ export function SimView() {
           if (player) {
             replay.current.spot = null;
             replay.current.lock = index;
+            replay.current.nudged = false;
+            replay.current.pullFrom = -1;
+            replay.current.latched = -1;
             const [px, py, pz] = worldFromField(player.x, player.yard, 0.9);
             setFollowTarget(px, py, pz, player.facingX, player.facingYard);
             return;
@@ -642,6 +754,21 @@ export function SimView() {
         }
         replay.current.spot = spot;
         replay.current.lock = -1;
+        replay.current.nudged = true;
+        replay.current.pullFrom = -1;
+        replay.current.latched = -1;
+        const framesNow = assigned.current?.replay.frames ?? [];
+        const placed = sampleReplay(framesNow, replay.current.age);
+        const hit = placed ? stillPlayerIndex(spot, placed.players, playStill.current) : -1;
+        if (hit >= 0 && placed) {
+          const body = placed.players[hit]!;
+          replay.current.spot = null;
+          replay.current.lock = hit;
+          replay.current.nudged = false;
+          const [px, py, pz] = worldFromField(body.x, body.yard, 0.9);
+          setFollowTarget(px, py, pz, body.facingX, body.facingYard);
+          return;
+        }
         setFollowTarget(wx, wy, wz);
         return;
       }
@@ -653,6 +780,9 @@ export function SimView() {
         if (body) {
           tapeLook.current.spot = null;
           tapeLook.current.lock = index;
+          tapeLook.current.nudged = false;
+          tapeLook.current.pullFrom = -1;
+          tapeLook.current.latched = -1;
           const [px, py, pz] = worldFromField(body.x, body.yard, 0.9);
           setFollowTarget(px, py, pz, body.facingX, body.facingYard);
           return;
@@ -660,6 +790,20 @@ export function SimView() {
       }
       tapeLook.current.spot = spot;
       tapeLook.current.lock = -1;
+      tapeLook.current.nudged = true;
+      tapeLook.current.pullFrom = -1;
+      tapeLook.current.latched = -1;
+      const tapeNow = tapeFrame();
+      const tapeHit = tapeNow ? stillPlayerIndex(spot, tapeNow.bodies, tapeStill.current) : -1;
+      if (tapeHit >= 0 && tapeNow) {
+        const body = tapeNow.bodies[tapeHit]!;
+        tapeLook.current.spot = null;
+        tapeLook.current.lock = tapeHit;
+        tapeLook.current.nudged = false;
+        const [px, py, pz] = worldFromField(body.x, body.yard, 0.9);
+        setFollowTarget(px, py, pz, body.facingX, body.facingYard);
+        return;
+      }
       setFollowTarget(wx, wy, wz);
     };
     const down = (event: PointerEvent) => {
@@ -707,6 +851,35 @@ export function SimView() {
       window.removeEventListener("pointerup", up, true);
     };
   }, [camera, gl, scene]);
+
+  const replayPoses = useRef<Map<string, string | null> | null>(null);
+  const replayKitSide = useRef<"off" | "def" | null>(null);
+  const [poseStamp, setPoseStamp] = useState(0);
+  void poseStamp;
+  const showReplayPoses = (rows: readonly { id: string; pose?: string | null }[], side?: "off" | "def") => {
+    const prev = replayPoses.current;
+    let changed = prev == null || prev.size !== rows.length || replayKitSide.current !== (side ?? null);
+    if (!changed && prev) {
+      for (const row of rows) {
+        if (prev.get(row.id) !== (row.pose ?? null)) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (!changed) return;
+    const next = new Map<string, string | null>();
+    for (const row of rows) next.set(row.id, row.pose ?? null);
+    replayPoses.current = next;
+    replayKitSide.current = side ?? null;
+    setPoseStamp((n) => n + 1);
+  };
+  const clearReplayPoses = () => {
+    if (!replayPoses.current && !replayKitSide.current) return;
+    replayPoses.current = null;
+    replayKitSide.current = null;
+    setPoseStamp((n) => n + 1);
+  };
 
   useFrame((_, dt) => {
     // Button 0 is sprint while the play is live. After a whistle with time left,
@@ -770,6 +943,8 @@ export function SimView() {
       setReplayFootage(hasFootage);
     }
     const overAtStart = state.playOver;
+    // Captured before the whistle. A quarter flip in this frame must not seal the trail onto the other goal.
+    const attackNorth = readAttackNorth();
     const queueWhistle = (ballSpot: boolean, safety = false) => {
       if (preview.current || readMode() === "practice") {
         markPlayOver(state, ballSpot, undefined, safety);
@@ -889,18 +1064,25 @@ export function SimView() {
       let nudged = false;
       if (readTapeLocked() && readTapeSelected()) {
         const yHeld = readReplayPad(3) || keys.current.has("KeyY");
-        const faceHeld = readPadButton(0);
+        const padAHeld = readPadButton(0);
+        const keyAHeld = keys.current.has("KeyA");
         const pad = readBasicPad();
         const stick = pad ? radialDeadzone(pad.x, -pad.y) : { x: 0, y: 0 };
-        let turn = (keys.current.has("Period") ? 1 : 0) - (keys.current.has("Comma") ? 1 : 0);
-        if (faceHeld && stick.x) turn += Math.sign(stick.x);
-        if (!yHeld && !faceHeld) {
-          let sx = stick.x;
-          let sy = stick.y;
-          if (keys.current.has("KeyD")) sx += 1;
-          if (keys.current.has("KeyA")) sx -= 1;
-          if (keys.current.has("KeyW")) sy += 1;
-          if (keys.current.has("KeyS")) sy -= 1;
+        const arrowX = (keys.current.has("ArrowRight") ? 1 : 0) - (keys.current.has("ArrowLeft") ? 1 : 0);
+        const arrowY = (keys.current.has("ArrowUp") ? 1 : 0) - (keys.current.has("ArrowDown") ? 1 : 0);
+        const stickLive = stick.x !== 0 || stick.y !== 0;
+        const arrowsLive = arrowX !== 0 || arrowY !== 0;
+        // Gamepad A snaps to the left stick. Keyboard A eases toward the arrows.
+        // WASD stays off this path so it does not also slide the player.
+        const stickAim = !yHeld && padAHeld && stickLive;
+        const arrowAim = !yHeld && keyAHeld && !stickAim && arrowsLive;
+        if (!yHeld) {
+          let sx = stickAim ? 0 : stick.x;
+          let sy = stickAim ? 0 : stick.y;
+          if (!arrowAim) {
+            sx += arrowX;
+            sy += arrowY;
+          }
           const mag = Math.hypot(sx, sy);
           if (mag > 1) {
             sx /= mag;
@@ -911,7 +1093,17 @@ export function SimView() {
             slideTapeSelection(move.x * EDIT_SPEED * stepDt, move.yard * EDIT_SPEED * stepDt);
             nudged = true;
           }
+          if (stickAim) {
+            const aim = steerFromCamera(stick.x, stick.y, camera);
+            aimTapeSelection(aim.x, aim.yard, null);
+            nudged = true;
+          } else if (arrowAim) {
+            const aim = steerFromCamera(arrowX, arrowY, camera);
+            aimTapeSelection(aim.x, aim.yard, 2.4 * stepDt);
+            nudged = true;
+          }
         }
+        const turn = (keys.current.has("Period") ? 1 : 0) - (keys.current.has("Comma") ? 1 : 0);
         if (turn !== 0) {
           turnTapeSelection(2.4 * stepDt * Math.sign(turn));
           nudged = true;
@@ -927,8 +1119,9 @@ export function SimView() {
           group.position.set(x, y, z);
           group.rotation.y = yawFromFacing(sample.facingX, sample.facingYard);
           const ring = group.getObjectByName("player-ring");
-          if (ring) ring.position.y = 0.04 - sample.hop;
+          if (ring) ring.position.y = MARK_Y - sample.hop;
         }
+        showReplayPoses(frame.bodies, frame.side);
         if (frame.pose !== poseShown.current) {
           poseShown.current = frame.pose;
           setCarrierPose(frame.pose);
@@ -943,7 +1136,11 @@ export function SimView() {
         }
         const yDown = readReplayPad(3) || keys.current.has("KeyY");
         const rs = readRightStick();
-        if (takeLookPress(tapeLook.current, yDown, Math.hypot(rs.x, rs.y))) {
+        const ls = readBasicPad();
+        const stickMoved = Math.hypot(rs.x, rs.y) > 0 || (ls ? Math.hypot(ls.x, ls.y) > 0.18 : false);
+        if (takeLookPress(tapeLook.current, yDown, stickMoved ? 1 : 0)) {
+          tapeLook.current.pullFrom = -1;
+          tapeLook.current.latched = -1;
           if (tapeLook.current.spot) tapeLook.current.lock = -1;
           tapeLook.current.spot = null;
           tapeLook.current.lock = nextLook(tapeLook.current.lock, frame.bodies.length);
@@ -953,32 +1150,58 @@ export function SimView() {
         const carrier = frame.bodies.find((body) => body.id === carrierId) ?? frame.bodies[0];
         let lookX = spot ? spot.x : locked ? locked.x : frame.ballX;
         let lookYard = spot ? spot.yard : locked ? locked.yard : frame.ballYard;
-        const editingMove = readTapeLocked() && !!readTapeSelected() && !(readReplayPad(3) || keys.current.has("KeyY"));
-        const delta = markPan(keys.current, camera, stepDt, !editingMove);
-        if (delta) {
+        const yOrbit = readReplayPad(3) || keys.current.has("KeyY");
+        const editingMove = readTapeLocked() && !!readTapeSelected() && !yOrbit;
+        const delta = markPan(keys.current, camera, stepDt, !editingMove && !yOrbit, !editingMove);
+        const xMoved = !!delta || tapeLook.current.nudged;
+        if (delta && tapeLook.current.latched < 0) {
+          if (!tapeLook.current.spot && tapeLook.current.lock >= 0) tapeLook.current.pullFrom = tapeLook.current.lock;
           const moved = clampFocus(lookX + delta.x, lookYard + delta.yard);
           tapeLook.current.spot = moved;
           tapeLook.current.lock = -1;
           lookX = moved.x;
           lookYard = moved.yard;
         }
-        const facingX = locked?.facingX ?? carrier?.facingX ?? 0;
-        const facingYard = locked?.facingYard ?? carrier?.facingYard ?? 1;
+        if (tapeLook.current.spot && tapeLook.current.pullFrom >= 0) {
+          const away = frame.bodies[tapeLook.current.pullFrom];
+          if (!away || Math.hypot(away.x - tapeLook.current.spot.x, away.yard - tapeLook.current.spot.yard) > X_ON_PLAYER) {
+            tapeLook.current.pullFrom = -1;
+          }
+        }
+        if (xMoved && tapeLook.current.spot && tapeLook.current.latched < 0) {
+          const hit = stillPlayerIndex(tapeLook.current.spot, frame.bodies, tapeStill.current);
+          if (hit >= 0 && hit !== tapeLook.current.pullFrom) {
+            const body = frame.bodies[hit]!;
+            tapeLook.current.spot = null;
+            tapeLook.current.lock = hit;
+            tapeLook.current.pullFrom = -1;
+            tapeLook.current.latched = delta ? hit : -1;
+            lookX = body.x;
+            lookYard = body.yard;
+          }
+        }
+        if (!delta) tapeLook.current.latched = -1;
+        tapeLook.current.nudged = false;
+        rememberPlayers(tapeStill.current, frame.bodies);
+        const followed = !tapeLook.current.spot && tapeLook.current.lock >= 0 ? frame.bodies[tapeLook.current.lock] : locked;
+        const facingX = followed?.facingX ?? carrier?.facingX ?? 0;
+        const facingYard = followed?.facingYard ?? carrier?.facingYard ?? 1;
         const [lx, ly, lz] = worldFromField(lookX, lookYard, tapeLook.current.spot ? 0.08 : 0.9);
         setFollowTarget(lx, ly, lz, facingX, facingYard);
         if (userRing.current) {
           if (tapeLook.current.spot) userRing.current.visible = false;
           else {
-            const [rx, , rz] = worldFromField(lookX, lookYard, 0.04);
+            const [rx, , rz] = worldFromField(lookX, lookYard, MARK_Y);
             userRing.current.visible = true;
-            userRing.current.position.set(rx, 0.04, rz);
+            userRing.current.position.set(rx, MARK_Y, rz);
+            if (followed) tintRing(userRing.current, followed.team, frame.side);
           }
         }
         const selected = frame.bodies.find((body) => body.id === readTapeSelected());
         if (editRing.current && selected) {
           const [x, , z] = worldFromField(selected.x, selected.yard, 0.05);
           editRing.current.visible = true;
-          editRing.current.position.set(x, 0.05, z);
+          editRing.current.position.set(x, MARK_Y, z);
         } else if (editRing.current) editRing.current.visible = false;
       }
       trailLine.visible = false;
@@ -990,6 +1213,8 @@ export function SimView() {
       return;
     }
     tapeLook.current.open = false;
+    tapeStill.current.clear();
+    if (!replay.current.on) playStill.current.clear();
     if (editRing.current) editRing.current.visible = false;
     const replayWas = replay.current.on;
     if (r3Edge && replayWas) {
@@ -1031,15 +1256,20 @@ export function SimView() {
           group.position.set(x, y, z);
           group.rotation.y = yawFromFacing(sample.facingX, sample.facingYard);
           const ring = group.getObjectByName("player-ring");
-          if (ring) ring.position.y = 0.04 - sample.hop;
+          if (ring) ring.position.y = MARK_Y - sample.hop;
         }
+        showReplayPoses(frame.players, frame.side);
         if (frame.pose !== poseShown.current) {
           poseShown.current = frame.pose;
           setCarrierPose(frame.pose);
         }
         const yDown = readReplayPad(3) || keys.current.has("KeyY");
         const rs = readRightStick();
-        if (takeLookPress(replay.current, yDown, Math.hypot(rs.x, rs.y))) {
+        const ls = readBasicPad();
+        const stickMoved = Math.hypot(rs.x, rs.y) > 0 || (ls ? Math.hypot(ls.x, ls.y) > 0.18 : false);
+        if (takeLookPress(replay.current, yDown, stickMoved ? 1 : 0)) {
+          replay.current.pullFrom = -1;
+          replay.current.latched = -1;
           if (replay.current.spot) replay.current.lock = -1;
           replay.current.spot = null;
           replay.current.lock = nextLook(replay.current.lock, frame.players.length);
@@ -1050,8 +1280,11 @@ export function SimView() {
         const carrier = frame.players.find((player) => player.id === carrierId) ?? frame.players[0];
         let lookX = spot ? spot.x : locked ? locked.x : frame.ballX;
         let lookYard = spot ? spot.yard : locked ? locked.yard : frame.ballYard;
-        const delta = markPan(keys.current, camera, bounded, true);
-        if (delta) {
+        const yOrbit = readReplayPad(3) || keys.current.has("KeyY");
+        const delta = markPan(keys.current, camera, bounded, !yOrbit, true);
+        const xMoved = !!delta || replay.current.nudged;
+        if (delta && replay.current.latched < 0) {
+          if (!replay.current.spot && replay.current.lock >= 0) replay.current.pullFrom = replay.current.lock;
           const moved = clampFocus(lookX + delta.x, lookYard + delta.yard);
           const [nx, , nz] = worldFromField(moved.x, moved.yard, 0);
           const [ox, , oz] = worldFromField(lookX, lookYard, 0);
@@ -1062,8 +1295,30 @@ export function SimView() {
           lookX = moved.x;
           lookYard = moved.yard;
         }
-        const facingX = locked?.facingX ?? carrier?.facingX ?? 0;
-        const facingYard = locked?.facingYard ?? carrier?.facingYard ?? 1;
+        if (replay.current.spot && replay.current.pullFrom >= 0) {
+          const away = frame.players[replay.current.pullFrom];
+          if (!away || Math.hypot(away.x - replay.current.spot.x, away.yard - replay.current.spot.yard) > X_ON_PLAYER) {
+            replay.current.pullFrom = -1;
+          }
+        }
+        if (xMoved && replay.current.spot && replay.current.latched < 0) {
+          const hit = stillPlayerIndex(replay.current.spot, frame.players, playStill.current);
+          if (hit >= 0 && hit !== replay.current.pullFrom) {
+            const body = frame.players[hit]!;
+            replay.current.spot = null;
+            replay.current.lock = hit;
+            replay.current.pullFrom = -1;
+            replay.current.latched = delta ? hit : -1;
+            lookX = body.x;
+            lookYard = body.yard;
+          }
+        }
+        if (!delta) replay.current.latched = -1;
+        replay.current.nudged = false;
+        rememberPlayers(playStill.current, frame.players);
+        const followed = !replay.current.spot && replay.current.lock >= 0 ? frame.players[replay.current.lock] : locked;
+        const facingX = followed?.facingX ?? carrier?.facingX ?? 0;
+        const facingYard = followed?.facingYard ?? carrier?.facingYard ?? 1;
         const [x, y, z] = worldFromField(lookX, lookYard, replay.current.spot ? 0.08 : 0.9);
         setFollowTarget(x, y, z, facingX, facingYard);
         // The live tip meets the runner between samples. The lock must not pull that stroke.
@@ -1071,9 +1326,11 @@ export function SimView() {
         if (userRing.current) {
           if (replay.current.spot) userRing.current.visible = false;
           else {
-            const [rx, , rz] = worldFromField(lookX, lookYard, 0.04);
+            const [rx, , rz] = worldFromField(lookX, lookYard, MARK_Y);
             userRing.current.visible = true;
-            userRing.current.position.set(rx, 0.04, rz);
+            userRing.current.position.set(rx, MARK_Y, rz);
+            const looked = followed ? state.players.find((player) => player.id === followed.id) : undefined;
+            if (looked) tintRing(userRing.current, looked.team, frame.side);
           }
         }
       }
@@ -1100,6 +1357,7 @@ export function SimView() {
       clearReplayScrub();
     }
     clearReplayHeldRate();
+    clearReplayPoses();
     publishReplayTransport({ kind: "off", playing: false, shuttle: 0, locked: false });
     const raw = basicMove(keys.current, readBasicPad());
     const steered = steerFromCamera(raw.x, raw.yard, camera);
@@ -1188,7 +1446,7 @@ export function SimView() {
       group.position.set(x, y, z);
       group.rotation.y = yawFromFacing(p.facingX, p.facingYard);
       const ring = group.getObjectByName("player-ring");
-      if (ring) ring.position.y = 0.04 - p.hop;
+      if (ring) ring.position.y = MARK_Y - p.hop;
     }
     if (!preview.current && play?.snapped && !state.playOver && !readPaused()) {
       const carrier = controlledPlayer(state);
@@ -1244,13 +1502,15 @@ export function SimView() {
       if (marked) {
         userRing.current.visible = true;
         userRing.current.position.copy(marked.position);
-        userRing.current.position.y = 0.04;
+        userRing.current.position.y = MARK_Y;
+        if (user) tintRing(userRing.current, user.team);
       } else userRing.current.visible = false;
     }
-    // Huddle watches the defender. Live play sits between the ball and that defender.
-    const lead = playingDef && user && ball && play?.snapped
-      ? { x: ball.x * 0.58 + user.x * 0.42, yard: ball.yard * 0.52 + user.yard * 0.48, facingX: user.facingX, facingYard: user.facingYard }
-      : user ?? ball;
+    // Entering defense starts on the ball carrier. The crosshair can switch to the user after that.
+    // Offense stays on the ball carrier. The practice spot marker overwrites this below.
+    if (playingDef && !defenseCam.current) setCameraCenter("carrier");
+    defenseCam.current = playingDef;
+    const lead = playingDef && readCameraCenter() === "user" && user ? user : ball ?? user;
     if (lead && !practiceSpotAiming()) {
       const [x, y, z] = worldFromField(lead.x, lead.yard, 0.9);
       setFollowTarget(x, y, z, lead.facingX, lead.facingYard);
@@ -1287,22 +1547,24 @@ export function SimView() {
     }
     placeLosLine();
     const carrierNow = controlledPlayer(state);
-    if (carrierNow && !readPaused() && (preview.current || play?.snapped)) {
+    if (carrierNow && !readPaused() && (preview.current || play?.snapped) && (!state.playOver || !overAtStart)) {
       const bounded = Math.min(Math.max(dt, 0), 0.05);
       const age = play ? play.age : (trail.current.clock += bounded);
-      if (!overAtStart && state.playOver && crossedAttackGoal(carrierNow.yard)) {
-        sealRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age);
-      } else if (!overAtStart && state.playOver) {
-        pinRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age);
+      const scored = attackNorth ? carrierNow.yard >= FIELD.length : carrierNow.yard <= 0;
+      if (state.playOver && scored) {
+        sealRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age, attackNorth);
+      } else if (state.playOver) {
+        pinRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age, attackNorth);
       } else {
         sampleRunnerTrail(trail.current, carrierNow.x, carrierNow.yard, age, bounded, state.burst === "dive");
       }
     }
+    // After the whistle the sealed path stays put. The live tip would drag it to later movement.
     syncTrailLine(
       trailLine,
       trail.current,
       null,
-      carrierNow ? { x: carrierNow.x, yard: carrierNow.yard } : null,
+      carrierNow && !state.playOver ? { x: carrierNow.x, yard: carrierNow.yard } : null,
     );
     if (!replay.current.on) artAge.current = play ? play.age : 99;
     const stamp = `${readPlaySide()}|${readUserDefenderId() ?? ""}|${readUserDefPose() ?? ""}`;
@@ -1320,21 +1582,23 @@ export function SimView() {
   // Subscribing is what repaints a stance when it is applied or released.
   void stanceRev;
   void defRev;
-  const defenseOn = !preview.current && readPlaySide() === "def";
-  const homeOnDefense = defenseOn && readMode() === "game";
+  const kitSide = replayKitSide.current ?? readPlaySide();
+  const defenseOn = !preview.current && kitSide === "def";
+  // Home stays with the user. Offense or Defense moves that kit onto the side they just chose.
+  const homeOnDefense = defenseOn;
   const userId = defenseOn ? readUserDefenderId() : null;
   const userPose = defenseOn ? readUserDefPose() : null;
 
   return (
     <>
       <primitive object={trailLine} dispose={null} />
-      <mesh ref={editRing} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh ref={editRing} visible={false} renderOrder={7} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.78, 0.96, 28]} />
-        <meshBasicMaterial color="#fb4f14" side={DoubleSide} />
+        <meshBasicMaterial color="#fb4f14" side={DoubleSide} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-48} polygonOffsetUnits={-48} />
       </mesh>
-      <mesh ref={userRing} visible={false} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh ref={userRing} visible={false} renderOrder={7} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.52, 0.68, 24]} />
-        <meshBasicMaterial color="#f4efe4" side={DoubleSide} />
+        <meshBasicMaterial color="#f4efe4" side={DoubleSide} transparent opacity={1} depthWrite={false} polygonOffset polygonOffsetFactor={-48} polygonOffsetUnits={-48} />
       </mesh>
       <RespotMarker />
       <ReplayFocusMark />
@@ -1349,9 +1613,12 @@ export function SimView() {
           <meshStandardMaterial color="#fbbf24" polygonOffset polygonOffsetFactor={-8} polygonOffsetUnits={-8} />
         </mesh>
         {roster.map((player) => {
-          const edited = tapeBodyPose(player.id);
+          const edited = readTapeLocked() ? tapeBodyPose(player.id) : null;
+          const recorded = replayPoses.current;
           const pose = edited
-            ?? (userId && player.id === userId ? (userPose ?? stanceOf(player)) : player.controlled ? (armed ? sim.current.pose : carrierPose) : stanceOf(player));
+            ?? (recorded
+              ? (recorded.get(player.id) ?? undefined)
+              : (userId && player.id === userId ? (userPose ?? stanceOf(player)) : player.controlled ? (armed ? sim.current.pose : carrierPose) : stanceOf(player)));
           return (
             <PlayerMesh
               key={player.id}

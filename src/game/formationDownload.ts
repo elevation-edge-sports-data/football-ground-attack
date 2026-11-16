@@ -23,3 +23,16 @@ function saveBlob(body: string, filename: string): void {
 export function downloadFormationFrame(frame: { frame: number }): void {
   saveBlob(formationDownloadBody(frame), formationDownloadName(frame.frame));
 }
+
+/** `replay-12-40.json` for frames 12 through 40. */
+export function replayDownloadName(first: number, last: number): string {
+  return `replay-${first}-${last}.json`;
+}
+
+/** Download a marked range. The file is an array of formation frames. */
+export function downloadReplayFrames(frames: readonly { frame: number }[]): void {
+  const first = frames[0];
+  const last = frames[frames.length - 1];
+  if (!first || !last) return;
+  saveBlob(formationDownloadBody(frames), replayDownloadName(first.frame, last.frame));
+}

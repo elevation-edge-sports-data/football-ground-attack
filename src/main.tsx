@@ -14,17 +14,43 @@ import { PersonnelHud } from "./game/PersonnelHud";
 import { PracticeBooks } from "./game/PracticeBooks";
 import { TeamScore, UniformBanner } from "./game/UniformBanner";
 import { BottomMenus } from "./game/BottomMenus";
-import { FormationEdit } from "./game/FormationEdit";
+import { CornerIcons } from "./game/CornerIcons";
 import { ReplayScrubBar } from "./game/ReplayScrubBar";
 import { ReplayTransport } from "./game/ReplayTransport";
-import { PauseTapeControls, TapeBar } from "./game/TapeBar";
+import { PauseTapeControls, ReplayActionPanel, TapeBar } from "./game/TapeBar";
 import { SimView } from "./game/SimView";
+import { readAttackNorth, youKitIsHome } from "./game/sim/attack";
 import { askRestart, bootCamera, formatBallOn, formatClock, formatTenths, previewRequested, readBoard, subscribeBoard } from "./game/sim/boot";
 import { replaySnapFollow } from "./game/replayCamera";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Missing #root");
+}
+
+function StatLines({
+  label,
+  yards,
+  firstDowns,
+  touchdowns,
+  yac,
+  align,
+}: {
+  label: string;
+  yards: number;
+  firstDowns: number;
+  touchdowns: number;
+  yac: number;
+  align: "left" | "right";
+}) {
+  return (
+    <div aria-label={label} style={{ textAlign: align, fontSize: 15, letterSpacing: "0.06em", lineHeight: 1.35, flex: "0 0 auto", whiteSpace: "nowrap" }}>
+      <div>{`TOTAL YARDS ${formatTenths(yards)}`}</div>
+      <div>{`FIRST DOWNS ${firstDowns}`}</div>
+      <div>{`TOUCHDOWNS ${touchdowns}`}</div>
+      <div>{`YAC ${formatTenths(yac)}`}</div>
+    </div>
+  );
 }
 
 function BallOnReadout({ yard, home, tail }: { yard: number; home: boolean; tail: string }) {
@@ -84,6 +110,11 @@ function App() {
   if (poseEditorRequested()) return <PoseEditor />;
   const practice = board.mode === "practice";
   const canContinue = practice || (board.clock > 0 && !board.seriesOver);
+  const youAway = !youKitIsHome();
+  const youStats = { label: "YOU stats", yards: board.totalYards, firstDowns: board.firstDowns, touchdowns: board.touchdowns, yac: board.yac };
+  const cpuStats = { label: "CPU stats", yards: board.cpuTotalYards, firstDowns: board.cpuFirstDowns, touchdowns: board.cpuTouchdowns, yac: board.cpuYac };
+  const leftStats = youAway ? cpuStats : youStats;
+  const rightStats = youAway ? youStats : cpuStats;
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -130,18 +161,13 @@ function App() {
             {practice ? null : <span>{board.downText}</span>}
             <BallOnReadout
               yard={board.ballOn}
-              home={board.homePossession}
+              home={board.mode === "game" ? board.homePossession : readAttackNorth()}
               tail={practice ? "" : formatClock(board.clock)}
             />
           </div>
           <TeamScore />
           <div style={{ display: "flex", alignItems: "flex-start", gap: 22, marginTop: 8 }}>
-            <div aria-label="Game stats" style={{ textAlign: "left", fontSize: 15, letterSpacing: "0.06em", lineHeight: 1.35, flex: "0 0 auto", whiteSpace: "nowrap" }}>
-              <div>{`TOTAL YARDS ${formatTenths(board.totalYards)}`}</div>
-              <div>{`FIRST DOWNS ${board.firstDowns}`}</div>
-              <div>{`TOUCHDOWNS ${board.touchdowns}`}</div>
-              <div>{`YAC ${formatTenths(board.yac)}`}</div>
-            </div>
+            <StatLines label={leftStats.label} align="left" yards={leftStats.yards} firstDowns={leftStats.firstDowns} touchdowns={leftStats.touchdowns} yac={leftStats.yac} />
             <div style={{ textAlign: "center", flex: "1 1 auto" }}>
           {!practice && board.over && !board.paused && board.clock <= 0 ? <div style={{ fontSize: 28, marginTop: 4 }}>Time expired</div> : null}
           {board.paused ? (
@@ -202,14 +228,16 @@ function App() {
             </>
           ) : null}
             </div>
+            <StatLines label={rightStats.label} align="right" yards={rightStats.yards} firstDowns={rightStats.firstDowns} touchdowns={rightStats.touchdowns} yac={rightStats.yac} />
           </div>
         </div>
       ) : null}
-      {!previewRequested() ? <FormationEdit /> : null}
+      {!previewRequested() ? <ReplayActionPanel /> : null}
       {!previewRequested() ? <TapeBar /> : null}
       {!previewRequested() ? <ReplayScrubBar /> : null}
       {!previewRequested() ? <ReplayTransport /> : null}
       {!previewRequested() ? <BottomMenus /> : null}
+      {!previewRequested() ? <CornerIcons /> : null}
     </div>
   );
 }

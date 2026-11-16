@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { Plane, Raycaster, Vector2, Vector3 } from "three";
 import { worldFromField } from "./frame";
 import { movePracticeAim, practiceSpotAiming, readPractice, subscribePractice } from "./sim/boot";
+import { getUniformSelection, kitById, subscribeUniforms } from "./uniforms";
 
 const _ray = new Raycaster();
 const _ndc = new Vector2();
@@ -17,6 +18,7 @@ const _hit = new Vector3();
 export function RespotMarker() {
   const { camera, gl } = useThree();
   const ui = useSyncExternalStore(subscribePractice, readPractice);
+  const homePrimary = kitById(useSyncExternalStore(subscribeUniforms, getUniformSelection).offId).endPrimary;
 
   useEffect(() => {
     const el = gl.domElement;
@@ -74,11 +76,11 @@ export function RespotMarker() {
       </mesh>
       <mesh rotation={[0, Math.PI / 4, 0]} raycast={() => null}>
         <boxGeometry args={[1.75, 0.035, 0.16]} />
-        <meshBasicMaterial color="#fb4f14" toneMapped={false} />
+        <meshBasicMaterial color={homePrimary} toneMapped={false} />
       </mesh>
       <mesh rotation={[0, -Math.PI / 4, 0]} raycast={() => null}>
         <boxGeometry args={[1.75, 0.035, 0.16]} />
-        <meshBasicMaterial color="#fb4f14" toneMapped={false} />
+        <meshBasicMaterial color={homePrimary} toneMapped={false} />
       </mesh>
     </group>
   );

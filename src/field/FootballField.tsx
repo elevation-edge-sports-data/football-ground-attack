@@ -19,6 +19,7 @@ import {
   type EzTone,
   type SurfaceId,
 } from "../game/fieldLook";
+import { youKitIsHome } from "../game/sim/attack";
 import { kitById, subscribeUniforms, getUniformSelection, type Uniform } from "../game/uniforms";
 import {
   PATTERN_TILE_YARDS,
@@ -239,23 +240,20 @@ function hexRgb(hex: string) {
 }
 
 /**
- * v10 `homeLogoReady`. Kit 1 keeps the painted file.
- * Every other home kit recolors the navy body to the primary and the red mark to the secondary.
- * Kits 3 and 4 swap those two colors on the logo only.
+ * Body and mark use the end-zone primary and secondary.
+ * Kit 1's solid end zone swaps that pair, and the logo follows the swap.
  */
-function paintLogo(img: HTMLImageElement, kit: Uniform) {
+function paintLogo(img: HTMLImageElement, primary: string, secondary: string) {
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const g = canvas.getContext("2d");
   if (!g) return canvas;
   g.drawImage(img, 0, 0);
-  if (kit.id === 0) return canvas;
   const image = g.getImageData(0, 0, canvas.width, canvas.height);
   const data = image.data;
-  const swapLogo = kit.id === 2 || kit.id === 3;
-  const fill = hexRgb(swapLogo ? kit.endSecondary : kit.endPrimary);
-  const mark = hexRgb(swapLogo ? kit.endPrimary : kit.endSecondary);
+  const fill = hexRgb(primary);
+  const mark = hexRgb(secondary);
   for (let i = 0; i < data.length; i += 4) {
     if (data[i + 3]! < 18) continue;
     const r = data[i]!;
@@ -409,32 +407,34 @@ function MountainEndZones({ primary, secondary }: { primary: string; secondary: 
   );
 }
 
-function EndZones({ art, tone, kit }: { art: EzArtId; tone: EzTone; kit: Uniform }) {
-  const primary = kit.endPrimary;
-  const secondary = kit.endSecondary;
-  if (art === "off") return null;
-  if (art === "solid") {
-    // Kit 1's solid end zone uses orange as primary and blue as secondary.
-    const solidPrimary = kit.id === 0 ? secondary : primary;
-    const solidSecondary = kit.id === 0 ? primary : secondary;
-    return <EndZoneWash color={tone === "secondary" ? solidSecondary : solidPrimary} />;
+/** Colors painted on the end zones. Kit 1's solid art swaps the pair. */
+function endZonePalette(kit: Uniform, art: EzArtId): { primary: string; secondary: string } {
+  if (art === "solid" && kit.id === 0) {
+    return { primary: kit.endSecondary, secondary: kit.endPrimary };
   }
+  return { primary: kit.endPrimary, secondary: kit.endSecondary };
+}
+
+function EndZones({ art, tone, kit }: { art: EzArtId; tone: EzTone; kit: Uniform }) {
+  const { primary, secondary } = endZonePalette(kit, art);
+  if (art === "off") return null;
+  if (art === "solid") return <EndZoneWash color={tone === "secondary" ? secondary : primary} />;
   if (art === "diamonds") return <DiamondEndZones primary={primary} secondary={secondary} />;
   return <MountainEndZones primary={primary} secondary={secondary} />;
 }
 
-function MidfieldLogo({ kit, north }: { kit: Uniform; north: boolean }) {
-  const mesh = useRef<Mesh>(null);
+function MidfieldLogo({ primary, secondary, north }: { primary: string; secondary: string; north: boolean }) {
   const [paint, setPaint] = useState<{ map: CanvasTexture; width: number; height: number } | null>(null);
   useEffect(() => {
     let live = true;
     const img = new Image();
     img.onload = () => {
       if (!live) return;
-      const canvas = paintLogo(img, kit);
+      const canvas = paintLogo(img, primary, secondary);
       const map = new CanvasTexture(canvas);
       map.colorSpace = SRGBColorSpace;
       map.anisotropy = 8;
+      map.premultiplyAlpha = false;
       map.needsUpdate = true;
       const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
       // North: image width runs east-west. Otherwise image width runs north-south.
@@ -446,26 +446,26 @@ function MidfieldLogo({ kit, north }: { kit: Uniform; north: boolean }) {
     return () => {
       live = false;
     };
-  }, [kit, north]);
+  }, [primary, secondary, north]);
   useEffect(() => () => paint?.map.dispose(), [paint]);
-  useLayoutEffect(() => {
-    if (mesh.current) layFlat(mesh.current, north ? 0 : Math.PI / 2);
-  }, [north, paint]);
   if (!paint) return null;
+  // Flat on the turf, same unlit hexes as the end-zone art. A vertical plane
+  // from a missed ref rotation disappears under the high camera.
   return (
     <mesh
-      ref={mesh}
       position={[FIELD.width / 2, 0.05, -FIELD.length / 2]}
+      rotation={[-Math.PI / 2, 0, north ? 0 : Math.PI / 2]}
       renderOrder={4}
+      frustumCulled={false}
     >
       <planeGeometry args={[paint.width, paint.height]} />
-      <meshStandardMaterial
+      <meshBasicMaterial
         map={paint.map}
         transparent
         opacity={0.96}
         alphaTest={0.15}
-        roughness={0.9}
-        metalness={0}
+        toneMapped={false}
+        depthWrite={false}
         polygonOffset
         polygonOffsetFactor={-4}
         polygonOffsetUnits={-4}
@@ -488,7 +488,8 @@ function yardNumbers() {
 export function FootballField() {
   const look = useSyncExternalStore(subscribeFieldLook, readFieldLook);
   const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
-  const home = kitById(kits.offId);
+  const home = kitById(youKitIsHome() ? kits.offId : kits.defId);
+  const { primary, secondary } = endZonePalette(home, look.ezArt);
   const turf = useMemo(() => buildTurfGeometry(look.surface), [look.surface]);
   useEffect(() => () => turf.dispose(), [turf]);
   const turfMaterial = useMemo(
@@ -524,7 +525,7 @@ export function FootballField() {
       <mesh geometry={turf} material={turfMaterial} />
       <SurfaceGrain surface={look.surface} ezArt={look.ezArt} />
       <EndZones art={look.ezArt} tone={look.ezTone} kit={home} />
-      {look.logo ? <MidfieldLogo kit={home} north={look.logoNorth} /> : null}
+      {look.logo ? <MidfieldLogo primary={primary} secondary={secondary} north={look.logoNorth} /> : null}
       <EndZonePylons />
       <GoalPosts />
       <FieldLines />

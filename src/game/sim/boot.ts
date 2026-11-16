@@ -21,9 +21,12 @@ import {
   homeTwentyFive,
   orientLineup,
   readAttackNorth,
+  readYouHome,
   safetySpotYard,
   setAttackNorth,
   setCameraNorth,
+  setYouHome,
+  setYouHomeApplies,
   yardsToGoal,
 } from "./attack";
 
@@ -44,14 +47,22 @@ export type Scoreboard = {
   youScore: number;
   /** Defense. A defensive touchdown is 8. */
   cpuScore: number;
-  /** Sum of snap yardage. A loss reduces it. */
+  /** YOU snap yardage. A loss reduces it. */
   totalYards: number;
-  /** First downs only. A touchdown is not one. */
+  /** YOU first downs only. A touchdown is not one. */
   firstDowns: number;
-  /** Offensive touchdowns. */
+  /** YOU touchdowns, offensive or defensive. */
   touchdowns: number;
-  /** Sum of yards after the runner first touched a defender. */
+  /** YOU yards after the runner first touched a defender. */
   yac: number;
+  /** CPU snap yardage. A loss reduces it. */
+  cpuTotalYards: number;
+  /** CPU first downs only. A touchdown is not one. */
+  cpuFirstDowns: number;
+  /** CPU touchdowns, offensive or defensive. */
+  cpuTouchdowns: number;
+  /** CPU yards after the runner first touched a defender. */
+  cpuYac: number;
   over: boolean;
   /** Touchdown, Gain, Loss, or No gain. Empty during a live play. */
   title: string;
@@ -134,6 +145,7 @@ let openingProfile: Scoreboard["profile"] = "wings";
   // A fresh GAME ignores the saved side. Drill and practice keep it.
   if (sessionMode === "game") openingSide = rollPlaySide();
 }
+setYouHomeApplies(sessionMode !== "game");
 let practicePlay = 0;
 let practiceScheme = 0;
 let practiceSpotX = FIELD.width * 0.5;
@@ -191,6 +203,10 @@ let board: Scoreboard = {
   firstDowns: 0,
   touchdowns: 0,
   yac: 0,
+  cpuTotalYards: 0,
+  cpuFirstDowns: 0,
+  cpuTouchdowns: 0,
+  cpuYac: 0,
   over: false,
   title: "",
   detail: "",
@@ -228,6 +244,7 @@ let snappedToGo = 10;
 const boardListeners = new Set<() => void>();
 const nextListeners = new Set<() => void>();
 const restartListeners = new Set<() => void>();
+const resetListeners = new Set<() => void>();
 const replayListeners = new Set<() => void>();
 
 function publish() {
@@ -261,7 +278,8 @@ export function readPlaySide(): "off" | "def" {
 /**
  * One sitting of the box score.
  * `scores` also clears YOU and CPU. A new game and a mode change do.
- * An offense/defense change clears the four stat lines and the score too.
+ * An offense/defense change clears the stat lines.
+ * Practice and Drill keep the score.
  */
 function clearSittingStats(scores: boolean) {
   board = {
@@ -270,6 +288,10 @@ function clearSittingStats(scores: boolean) {
     firstDowns: 0,
     touchdowns: 0,
     yac: 0,
+    cpuTotalYards: 0,
+    cpuFirstDowns: 0,
+    cpuTouchdowns: 0,
+    cpuYac: 0,
     ...(scores ? { youScore: 0, cpuScore: 0 } : {}),
   };
 }
@@ -302,10 +324,23 @@ function prepareGameSideStage() {
   stageSpot = { los: lastSnap.los, snapX: lastSnap.snapX, exact: lastSnap.exact };
 }
 
+/**
+ * Drill and Practice. Swaps whether YOU is home or away.
+ * Kits, banner labels, and the controlled side stay put.
+ * A snapped drill play runs to the whistle. Home/Away waits until then.
+ */
+export function toggleYouHome() {
+  if (sessionMode === "game") return;
+  if (sessionMode === "drill" && !board.awaitSnap && !board.over) return;
+  setYouHome(!readYouHome());
+  publish();
+  queueStage();
+}
+
 /** Restage the huddle. The free safety, or the defender from the last snap, is seated on defense. */
 export function togglePlaySide() {
   if (sessionMode === "game") return;
-  clearSittingStats(true);
+  clearSittingStats(false);
   board = { ...board, side: board.side === "def" ? "off" : "def" };
   writePrefs({ side: board.side });
   if (sessionMode !== "practice") prepareGameSideStage();
@@ -435,6 +470,10 @@ function resetMatchHud() {
     firstDowns: 0,
     touchdowns: 0,
     yac: 0,
+    cpuTotalYards: 0,
+    cpuFirstDowns: 0,
+    cpuTouchdowns: 0,
+    cpuYac: 0,
     over: false,
     title: "",
     detail: "",
@@ -498,6 +537,7 @@ export function setSessionMode(next: SessionMode) {
   } else if (sessionMode !== "practice") {
     resetMatchHud();
     sessionMode = mode;
+    setYouHomeApplies(mode !== "game");
     if (mode === "game") gameQ1Side = board.side === "def" ? "def" : "off";
     writePrefs({ mode: sessionMode });
     queueStage();
@@ -505,6 +545,7 @@ export function setSessionMode(next: SessionMode) {
   }
   clearSittingStats(true);
   sessionMode = mode;
+  setYouHomeApplies(mode !== "game");
   writePrefs({ mode: sessionMode });
   queueStage();
 }
@@ -524,6 +565,60 @@ export function setPracticeScheme(index: number) {
   practiceSeeded = true;
   if (sessionMode === "practice") queueStage();
   else syncPractice();
+}
+
+/** Index of the call currently armed for a GAME huddle. */
+export function readArmedCallIndex(side: "off" | "def"): number {
+  return side === "def"
+    ? wrapIndex(schemeIndex, DEF_SCHEMES.length)
+    : wrapIndex(playIndex, OFF_PLAYS.length);
+}
+
+/**
+ * Rebuild the lineup that is waiting for the snap. A live or finished play is left alone,
+ * so a count changed during the play still waits for the snap after this one.
+ */
+export function restageArmedSnap() {
+  if (previewRequested() || !board.awaitSnap || board.over || board.replay) return;
+  if (sessionMode !== "practice") {
+    const spot = lastSnap;
+    stageSpot = { los: spot.los, snapX: spot.snapX, exact: spot.exact };
+    stageDead = false;
+  }
+  const wasPaused = board.paused;
+  queueStage();
+  if (wasPaused && !board.paused) {
+    board = { ...board, paused: true };
+    publish();
+  }
+}
+
+/**
+ * GAME huddle only. Replaces the controlled side's call and restages that snap.
+ * The other side keeps the call already chosen for this snap. Practice and drill ignore this.
+ */
+export function setGameUserCall(index: number) {
+  if (sessionMode !== "game" || previewRequested() || !Number.isFinite(index)) return;
+  if (!board.awaitSnap || board.over || board.replay) return;
+  const side = readPlaySide();
+  const length = side === "def" ? DEF_SCHEMES.length : OFF_PLAYS.length;
+  const next = wrapIndex(index, length);
+  if (side === "def") {
+    if (next === wrapIndex(schemeIndex, length)) return;
+    schemeIndex = next;
+  } else {
+    if (next === wrapIndex(playIndex, length)) return;
+    playIndex = next;
+  }
+  const spot = lastSnap;
+  stageSpot = { los: spot.los, snapX: spot.snapX, exact: spot.exact };
+  stageDead = false;
+  const wasPaused = board.paused;
+  queueStage();
+  if (wasPaused && !board.paused) {
+    board = { ...board, paused: true };
+    publish();
+  }
 }
 
 /** True while a practice re-spot is waiting for a confirm. Orbit rotation stays off. */
@@ -737,6 +832,7 @@ function advanceQuarter() {
 
 /**
  * The third quarter starts at the home 25.
+ * GAME's first play there is 1st & 10. Drill keeps the down and distance.
  * The second keeps the first quarter's last spot, down, and distance.
  * The fourth keeps the third quarter's last spot, down, and distance.
  * Points already on the board stay.
@@ -747,6 +843,10 @@ function placeEnteredQuarter() {
   if (entered !== 3 || !pendingSpot || seriesOver) return;
   const spot = homeTwentyFive();
   pendingSpot = { ...pendingSpot, los: spot };
+  if (sessionMode === "game") {
+    down = 1;
+    toGo = freshToGo(spot);
+  }
   board = {
     ...board,
     ballOn: spot,
@@ -758,12 +858,26 @@ function placeEnteredQuarter() {
 
 /**
  * Q1→Q2 and Q3→Q4 turn the offense around. Q2→Q3 keeps the direction.
+ * The spot reflects across midfield with that turn, so the chains and the
+ * next lineup move to the other end. Yard 30 becomes 70, and the hash swaps.
  * The play that just ended was scored before this runs.
  */
 function finishQuarterEntry(entered: number | null) {
   if (entered !== 2 && entered !== 4) return;
   flipAttackDirection();
-  board = { ...board, homePossession: readAttackNorth() };
+  if (!pendingSpot) {
+    board = { ...board, homePossession: readAttackNorth() };
+    return;
+  }
+  const los = FIELD.length - pendingSpot.los;
+  const ballX = FIELD.width - pendingSpot.ballX;
+  pendingSpot = { ...pendingSpot, los, ballX };
+  board = {
+    ...board,
+    ballOn: los,
+    downText: formatDown(down, toGo, los),
+    homePossession: readAttackNorth(),
+  };
 }
 
 export function onNextPlay(listener: () => void) {
@@ -787,6 +901,23 @@ export function onRestart(listener: () => void) {
 /** Fresh game after the last play has ended and another snap is not allowed. */
 export function askRestart() {
   for (const listener of restartListeners) listener();
+}
+
+export function onReset(listener: () => void) {
+  resetListeners.add(listener);
+  return () => {
+    resetListeners.delete(listener);
+  };
+}
+
+/**
+ * Start the current mode over from the opening snap. The controlled side stays.
+ * Practice keeps its book and its spot. The field look stays.
+ */
+export function askReset() {
+  if (previewRequested()) return;
+  practiceAiming = false;
+  for (const listener of resetListeners) listener();
 }
 
 export function onReplayToggle(listener: () => void) {
@@ -914,13 +1045,35 @@ function tallySnap(gain: number, runnerYard: number, score: "off" | "def" | null
   const start = consumeFirstContact();
   const offensive = score !== "def";
   const yacDelta = offensive && start != null ? tenth(downfieldDelta(runnerYard, start)) : 0;
+  const yardDelta = offensive ? gain : 0;
+  const fdDelta = firstDown && score == null ? 1 : 0;
+  // The side that just played offense. YOU is home. CPU is the other team.
+  const youOnOffense = board.side !== "def";
+  const youTd = (youOnOffense && score === "off") || (!youOnOffense && score === "def") ? 1 : 0;
+  const cpuTd = (!youOnOffense && score === "off") || (youOnOffense && score === "def") ? 1 : 0;
+  // GAME credits the team that scored. Home is YOU.
+  // Drill credits whoever is on that side now, and keeps points already scored.
+  // Practice still gives an offensive score to YOU and a defensive score to CPU.
+  const scoredPoints = score === "off" ? OFFENSE_TOUCHDOWN_POINTS : score === "def" ? DEFENSE_TOUCHDOWN_POINTS : 0;
+  const gameScore = sessionMode === "game";
+  const drillScore = sessionMode === "drill";
+  const youPoints = gameScore || drillScore
+    ? (youTd === 0 ? 0 : scoredPoints)
+    : (score === "off" ? OFFENSE_TOUCHDOWN_POINTS : 0);
+  const cpuPoints = gameScore || drillScore
+    ? (cpuTd === 0 ? 0 : scoredPoints)
+    : (score === "def" ? DEFENSE_TOUCHDOWN_POINTS : 0);
   return {
-    youScore: board.youScore + (score === "off" ? OFFENSE_TOUCHDOWN_POINTS : 0),
-    cpuScore: board.cpuScore + (score === "def" ? DEFENSE_TOUCHDOWN_POINTS : 0),
-    totalYards: tenth(board.totalYards + (offensive ? gain : 0)),
-    firstDowns: board.firstDowns + (firstDown && score == null ? 1 : 0),
-    touchdowns: board.touchdowns + (score === "off" ? 1 : 0),
-    yac: tenth(board.yac + yacDelta),
+    youScore: board.youScore + youPoints,
+    cpuScore: board.cpuScore + cpuPoints,
+    totalYards: tenth(board.totalYards + (youOnOffense ? yardDelta : 0)),
+    firstDowns: board.firstDowns + (youOnOffense ? fdDelta : 0),
+    touchdowns: board.touchdowns + youTd,
+    yac: tenth(board.yac + (youOnOffense ? yacDelta : 0)),
+    cpuTotalYards: tenth(board.cpuTotalYards + (youOnOffense ? 0 : yardDelta)),
+    cpuFirstDowns: board.cpuFirstDowns + (youOnOffense ? 0 : fdDelta),
+    cpuTouchdowns: board.cpuTouchdowns + cpuTd,
+    cpuYac: tenth(board.cpuYac + (youOnOffense ? 0 : yacDelta)),
   };
 }
 
@@ -1021,7 +1174,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
       const scoringTeam: "home" | "away" = kind === "off" ? offenseTeam : offenseTeam === "home" ? "away" : "home";
       const possession: "home" | "away" = scoringTeam === "home" ? "away" : "home";
       const nextSide: "off" | "def" = possession === "home" ? "off" : "def";
-      board = { ...board, side: nextSide };
+      // Kits stay with this scoring lineup until the next snap is built.
       gameKickSide = nextSide;
       setAttackNorth(possession === "home");
       const los = teamOwnLine(possession, 25);
@@ -1105,7 +1258,9 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
     toGo = freshToGo(nextLos);
     seriesOver = false;
     pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
-    board = { ...board, firstDowns: board.firstDowns + 1 };
+    board = board.side === "def"
+      ? { ...board, cpuFirstDowns: board.cpuFirstDowns + 1 }
+      : { ...board, firstDowns: board.firstDowns + 1 };
   } else {
     down += 1;
     if (down > 4) {
@@ -1120,6 +1275,23 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
         seriesOver = false;
         pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
         board = { ...board, title: "Turnover on downs", seriesOver: false, ballOn: nextLos };
+      } else if (sessionMode === "drill") {
+        // The other side takes over here. The drill keeps going at 1st and 10.
+        flipAttackDirection();
+        const nextSide: "off" | "def" = board.side === "def" ? "off" : "def";
+        down = 1;
+        toGo = freshToGo(nextLos);
+        seriesOver = false;
+        pendingSpot = { los: nextLos, ballX: spotBallX, exact: ballSpot };
+        board = {
+          ...board,
+          side: nextSide,
+          title: "Turnover on downs",
+          seriesOver: false,
+          ballOn: nextLos,
+          downText: formatDown(down, toGo, nextLos),
+        };
+        writePrefs({ side: nextSide });
       } else {
         seriesOver = true;
         pendingSpot = null;
@@ -1148,7 +1320,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
   return pendingSpot;
 }
 
-/** Settled next line of scrimmage. Null until the whistle is spotted. Drill still clears it on a turnover. */
+/** Settled next line of scrimmage. Null until the whistle is spotted. Practice still clears it on a turnover. */
 export function readPendingLos(): number | null {
   return pendingSpot ? pendingSpot.los : null;
 }
@@ -1257,6 +1429,10 @@ export function bootFullPlay(rollSide = false): { sim: Sim; assigned: AssignedPl
     firstDowns: 0,
     touchdowns: 0,
     yac: 0,
+    cpuTotalYards: 0,
+    cpuFirstDowns: 0,
+    cpuTouchdowns: 0,
+    cpuYac: 0,
     over: false,
     title: "",
     detail: "",

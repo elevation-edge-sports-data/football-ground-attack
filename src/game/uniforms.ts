@@ -148,6 +148,19 @@ export function getUniformSelection() {
 }
 
 /**
+ * `offId` is the user's kit. `defId` is the other kit.
+ * The side the user controls wears the user kit.
+ */
+export function kitIdForSquad(
+  squad: "off" | "def",
+  userSide: "off" | "def",
+  kits: Selection = selection,
+): number {
+  const userSquad = userSide === "def" ? squad === "def" : squad === "off";
+  return userSquad ? kits.offId : kits.defId;
+}
+
+/**
  * A free kit stays on the other side. A kit the other side already wears
  * is swapped, so the two sides never match.
  */

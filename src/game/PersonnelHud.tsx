@@ -1,10 +1,11 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
-import { readBoard, subscribeBoard } from "./sim/boot";
+import { readArmedCallIndex, readBoard, setGameUserCall, subscribeBoard } from "./sim/boot";
+import { DEF_SCHEMES, OFF_PLAYS } from "./sim/plays";
 import {
   DEFENSE_PERSONNEL,
   OFFENSE_PERSONNEL,
   PERSONNEL_LABEL,
-  PERSONNEL_LIMITS,
+  canStepPersonnel,
   readPersonnel,
   stepPersonnel,
   subscribePersonnel,
@@ -63,6 +64,16 @@ const callStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+const callSelectStyle: CSSProperties = {
+  ...callStyle,
+  padding: "0 4px",
+  borderRadius: 4,
+  border: "1px solid #fb4f14",
+  background: "#0c1410",
+  fontFamily: "inherit",
+  cursor: "pointer",
+};
+
 const rowStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -101,8 +112,9 @@ const valueStyle: CSSProperties = {
 
 function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: PersonnelCounts; steps: boolean }) {
   const label = PERSONNEL_LABEL[group];
-  const limit = PERSONNEL_LIMITS[group];
   const value = counts[group];
+  const minus = !canStepPersonnel(group, -1, counts);
+  const plus = !canStepPersonnel(group, 1, counts);
   return (
     <div style={rowStyle}>
       <span>{label}</span>
@@ -111,10 +123,10 @@ function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: Person
           <button
             type="button"
             aria-label={`${label} decrease`}
-            disabled={value <= limit.min}
+            disabled={minus}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => stepPersonnel(group, -1)}
-            style={stepButtonStyle(value <= limit.min)}
+            style={stepButtonStyle(minus)}
           >
             −
           </button>
@@ -124,10 +136,10 @@ function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: Person
           <button
             type="button"
             aria-label={`${label} increase`}
-            disabled={value >= limit.max}
+            disabled={plus}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => stepPersonnel(group, 1)}
-            style={stepButtonStyle(value >= limit.max)}
+            style={stepButtonStyle(plus)}
           >
             +
           </button>
@@ -137,15 +149,37 @@ function Stepper({ group, counts, steps }: { group: PersonnelKey; counts: Person
   );
 }
 
+function CallPick({ side, names }: { side: "off" | "def"; names: readonly string[] }) {
+  return (
+    <select
+      aria-label={side === "off" ? "Offense play" : "Defense scheme"}
+      value={String(readArmedCallIndex(side))}
+      onChange={(event) => {
+        setGameUserCall(Number(event.target.value));
+        event.currentTarget.blur();
+      }}
+      style={callSelectStyle}
+    >
+      {names.map((name, index) => (
+        <option key={name} value={String(index)}>
+          {name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function Panel({
   title,
   call,
+  pick,
   groups,
   counts,
   steps,
 }: {
   title: string;
   call: string;
+  pick: { side: "off" | "def"; names: readonly string[] } | null;
   groups: readonly PersonnelKey[];
   counts: PersonnelCounts;
   steps: boolean;
@@ -154,7 +188,7 @@ function Panel({
     <div style={panelStyle}>
       <div style={titleRowStyle}>
         <span style={titleStyle}>{title}</span>
-        <span style={callStyle}>{call}</span>
+        {pick ? <CallPick side={pick.side} names={pick.names} /> : <span style={callStyle}>{call}</span>}
       </div>
       {groups.map((group) => (
         <Stepper key={group} group={group} counts={counts} steps={steps} />
@@ -163,16 +197,35 @@ function Panel({
   );
 }
 
-/** Offense and defense personnel steppers. Counts apply on the next snap. */
+/** Offense and defense personnel steppers. Counts apply on the upcoming snap. */
 export function PersonnelHud() {
   const counts = useSyncExternalStore(subscribePersonnel, readPersonnel);
   const board = useSyncExternalStore(subscribeBoard, readBoard);
   const tape = useSyncExternalStore(subscribeTape, readTapeOn);
   const steps = !board.replay && !tape;
+  // GAME huddle: the controlled side picks its call. The other side stays a label.
+  const picking = board.mode === "game" && board.awaitSnap && !board.over && !board.replay && !tape;
+  const userDef = board.side === "def";
+  const offNames = OFF_PLAYS.map((play) => play.name);
+  const defNames = DEF_SCHEMES.map((scheme) => scheme.name);
   return (
     <div aria-label="Personnel" style={stripStyle}>
-      <Panel title="Offense" call={board.playName} groups={OFFENSE_PERSONNEL} counts={counts} steps={steps} />
-      <Panel title="Defense" call={board.schemeName} groups={DEFENSE_PERSONNEL} counts={counts} steps={steps} />
+      <Panel
+        title="Offense"
+        call={board.playName}
+        pick={picking && !userDef ? { side: "off", names: offNames } : null}
+        groups={OFFENSE_PERSONNEL}
+        counts={counts}
+        steps={steps}
+      />
+      <Panel
+        title="Defense"
+        call={board.schemeName}
+        pick={picking && userDef ? { side: "def", names: defNames } : null}
+        groups={DEFENSE_PERSONNEL}
+        counts={counts}
+        steps={steps}
+      />
     </div>
   );
 }

@@ -147,9 +147,18 @@ export function PlayerFigure({
   return (
     <group onClick={onJointClick ? selectPart : undefined}>
       {(mark ?? (controlled || ring)) ? (
-        <mesh name="player-ring" rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+        <mesh name="player-ring" renderOrder={7} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.062, 0]}>
           <ringGeometry args={[0.52, 0.68, 24]} />
-          <meshBasicMaterial color="#f4efe4" side={DoubleSide} />
+          <meshBasicMaterial
+            color={kit.endPrimary}
+            side={DoubleSide}
+            transparent
+            opacity={1}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-48}
+            polygonOffsetUnits={-48}
+          />
         </mesh>
       ) : null}
       <group ref={alignRef} name={FIGURE_ALIGN}>

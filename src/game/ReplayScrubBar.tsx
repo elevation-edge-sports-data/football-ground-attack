@@ -1,5 +1,6 @@
 import { useRef, useSyncExternalStore, type CSSProperties } from "react";
 import { readReplayScrub, seekReplayScrub, subscribeReplayScrub } from "./replayScrub";
+import { getUniformSelection, kitById, subscribeUniforms } from "./uniforms";
 
 const bar: CSSProperties = {
   position: "fixed",
@@ -44,6 +45,7 @@ export function ReplayScrubBar() {
   const scrub = useSyncExternalStore(subscribeReplayScrub, readReplayScrub);
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef(false);
+  const home = kitById(useSyncExternalStore(subscribeUniforms, getUniformSelection).offId).endPrimary;
   if (!scrub.on) return null;
   const shown = Math.round(Math.max(0, Math.min(1, scrub.fraction)) * 100);
   const seekAt = (clientX: number) => {
@@ -93,7 +95,7 @@ export function ReplayScrubBar() {
             style={{
               height: "100%",
               width: `${shown}%`,
-              background: "#5a1021",
+              background: home,
               boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.75)",
             }}
           />

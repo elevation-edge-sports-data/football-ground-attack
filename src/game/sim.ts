@@ -24,7 +24,7 @@ import {
   type ScriptAction,
   type StrideType,
 } from "./carrierPose";
-import { carrierTravelScale } from "./sim/tuning";
+import { carrierTravelScale, readUserOnOffense } from "./sim/tuning";
 
 /** Yards per second while carrying. A few seconds of input crosses the formation. */
 const SPEED = 8.5;
@@ -894,6 +894,8 @@ export function step(sim: Sim, input: Input, dt: number) {
   if (sim.hurdleChain && input.action === sim.hurdleChain) poseAction = input.sprint ? "sprint" : "carry";
   if (sim.moveSpent && input.action === sim.moveSpent) poseAction = input.sprint ? "sprint" : "carry";
   let strideDist = 0;
+  const x0 = carrier.x;
+  const y0 = carrier.yard;
   if (bounded > 0) {
     let mx = input.x;
     let my = input.yard;
@@ -1107,5 +1109,12 @@ export function step(sim: Sim, input: Input, dt: number) {
     carrier.hop = motion.hop;
   }
   const gaitDist = poseAction === "sprint" && !chaining ? strideDist * SPRINT_GAIT : strideDist;
-  syncCarrierPose(sim, poseAction, gaitDist);
+  // The user stick drives its own stride. The CPU runner's clock follows the
+  // ground actually covered, so a clamped or blocked step does not spin the pose.
+  let strideClock = gaitDist;
+  if (!readUserOnOffense() && strideDist > 0) {
+    const covered = Math.hypot(carrier.x - x0, carrier.yard - y0);
+    strideClock = poseAction === "sprint" && !chaining ? covered * SPRINT_GAIT : covered;
+  }
+  syncCarrierPose(sim, poseAction, strideClock);
 }

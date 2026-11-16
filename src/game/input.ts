@@ -398,16 +398,18 @@ export function isMoveCode(code: string) {
  * Defense buttons, the same on every profile.
  * Left stick and WASD move. LT/RT are wrap and punch. The right stick is the hit stick.
  * Huddle: A snaps, Y changes player. X and B only zoom. Live: A sprints, X dives,
- * Y sheds a block or changes player when free, LB or RB strafes. B does not change player.
+ * Y changes player, V sheds, LB or RB strafes. B does not change player.
+ * Y never sheds. Shed stays on V and the gamepad truck button.
  */
 export type RawDefense = {
   /** Screen axes. +x is screen-right. +y is screen-up. */
   moveX: number;
   moveY: number;
   sprint: boolean;
-  /** Y. Huddle changes player. Live changes player when free, and sheds when blocked. */
+  /** Y. Changes player in the huddle and during the play. Never sheds. */
   changeOn: boolean;
   dive: boolean;
+  /** V, or the gamepad truck button. Not Y. */
   shed: boolean;
   wrap: boolean;
   punch: boolean;
@@ -455,7 +457,7 @@ export function readRawDefense(keys: ReadonlySet<string>): RawDefense {
     sprint: keys.has("Space") || !!pad?.sprint,
     changeOn: keys.has("KeyY") || !!pad?.truck,
     dive: keys.has("KeyC") || !!pad?.dive,
-    shed: keys.has("KeyV") || keys.has("KeyY") || !!pad?.truck,
+    shed: keys.has("KeyV") || !!pad?.truck,
     wrap: keys.has("KeyQ") || !!pad?.stiffL,
     punch: keys.has("KeyE") || !!pad?.stiffR,
     strafe: keys.has("ShiftLeft") || keys.has("ShiftRight") || !!pad?.jukeL || !!pad?.jukeR,

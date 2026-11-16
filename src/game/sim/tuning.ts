@@ -163,6 +163,10 @@ export function setUserOnOffense(on: boolean) {
   userOnOffense = on;
 }
 
+export function readUserOnOffense() {
+  return userOnOffense;
+}
+
 /**
  * v10 `offMult` for the carrier, times play speed.
  * Preview and offense use You. Defense uses CPU for the runner.

@@ -3,15 +3,17 @@
  * The ball carrier stays the controlled halfback. Other defenders stay on AI.
  * The saved key is whoever was selected at the snap. A live switch does not change it.
  * Huddle: A or Enter snaps. Y changes player. X and B do not. A stick, d-pad, or WASD
- * at the Y press points; a plain Y takes the next defender. Live Y does the same
- * while this defender is free. A Y press on a blocked defender still sheds.
+ * at the Y press points; a plain Y takes the next defender. Live Y only switches.
+ * Chase-down (the carrier is past every defender) aims from this defender.
+ * Any other live press takes the highest open position group, then the one
+ * nearest the carrier side to side. Y never sheds. V does.
  */
 import { FIELD, clamp } from "../../field/spec";
 import type { Player } from "../sim";
 import { contactOf } from "./contact";
 import { bodyTravelScale, readPlaySpeed } from "./tuning";
-import { attackSign, shiftDownfield } from "./attack";
-import { flushStanceReleases, releaseStance } from "./stance";
+import { attackSign, downfieldDelta, shiftDownfield } from "./attack";
+import { flushStanceReleases, releaseStance, stanceOf } from "./stance";
 import type { BlockAssignment, PlayAssignment } from "./types";
 
 const SPRINT_MULT = 1.38;
@@ -152,6 +154,13 @@ export function readUserDefenderId() {
 
 export function readUserDefPose() {
   return pose;
+}
+
+/** Pose the field showed for this player on a live frame. Null is the bind pose. */
+export function poseForReplay(player: Player, carrierPose: string): string | null {
+  if (currentId && player.id === currentId) return pose ?? stanceOf(player) ?? null;
+  if (player.controlled) return carrierPose;
+  return stanceOf(player) ?? null;
 }
 
 /** 0 skips the normal tackle. Strafe widens it. Dive, hit, and wrap use the body reach. */
@@ -344,9 +353,7 @@ function pointSelect(players: readonly DefenseBody[], dx: number, dy: number, fr
   let best: DefenseBody | null = null;
   let score = 0.16;
   for (const player of defenders(players)) {
-    if (player === from) continue;
-    const clock = contactOf(player);
-    if (clock.pancake > 0 || clock.recover > 0) continue;
+    if (player === from || defenderBlocked(players, player)) continue;
     const vx = player.x - origin.x;
     const vy = player.yard - origin.yard;
     const dist = Math.hypot(vx, vy);
@@ -537,6 +544,101 @@ function defenderEngaged(players: readonly DefenseBody[], me: DefenseBody) {
   });
 }
 
+/** Pancake, get-up, or a block that is on him right now. */
+function defenderBlocked(players: readonly DefenseBody[], player: DefenseBody) {
+  const clock = contactOf(player);
+  if (clock.pancake > 0 || clock.recover > 0 || clock.engage > 0) return true;
+  for (const other of players) {
+    const job = other.assignment;
+    if (job.kind !== "block" || job.targetId !== player.id) continue;
+    if (Math.hypot(other.x - player.x, other.yard - player.yard) < 2.4) return true;
+  }
+  return false;
+}
+
+/** The carrier is past every defender. Nobody is left in front of him. */
+function chaseDown(players: readonly DefenseBody[], carrier: Player) {
+  const mates = defenders(players);
+  if (!mates.length) return false;
+  return mates.every((player) => downfieldDelta(carrier.yard, player.yard) > 0);
+}
+
+/**
+ * Players nearer the middle of the field are interior. The rest are exterior.
+ * One player is interior. Two or more keep the closer half inside.
+ */
+function edgeSplit(group: readonly DefenseBody[]) {
+  const interior = new Set<DefenseBody>();
+  const exterior = new Set<DefenseBody>();
+  if (group.length <= 1) {
+    if (group[0]) interior.add(group[0]);
+    return { interior, exterior };
+  }
+  const mid = FIELD.width * 0.5;
+  const sorted = group.slice().sort((a, b) => Math.abs(a.x - mid) - Math.abs(b.x - mid) || a.x - b.x);
+  const interiorCount = Math.max(1, Math.floor(group.length / 2));
+  sorted.forEach((player, index) => {
+    if (index < interiorCount) interior.add(player);
+    else exterior.add(player);
+  });
+  return { interior, exterior };
+}
+
+function exteriorDb(player: DefenseBody) {
+  const role = dbRoleOf(player);
+  if (role === "CB" || role === "NCB") return true;
+  return player.assignment.kind === "defense" && player.assignment.isCorner;
+}
+
+/**
+ * 0 interior DB, 1 interior LB, 2 exterior LB, 3 exterior DB, 4 exterior DT, 5 interior DT.
+ * Safeties are interior DBs. Corners are exterior DBs.
+ */
+function switchGroup(player: DefenseBody, lbs: { interior: Set<DefenseBody>; exterior: Set<DefenseBody> }, dts: { interior: Set<DefenseBody>; exterior: Set<DefenseBody> }) {
+  if (player.role === "DB") return exteriorDb(player) ? 3 : 0;
+  if (player.role === "LB") return lbs.exterior.has(player) ? 2 : 1;
+  if (player.role === "DT") return dts.exterior.has(player) ? 4 : 5;
+  return 6;
+}
+
+/**
+ * Highest open group, then the smallest side-to-side gap to the carrier.
+ * The current player is skipped. Pancaked and recovering players are skipped.
+ */
+function autoDetect(players: readonly DefenseBody[], carrier: Player, from: DefenseBody | null) {
+  const mates = defenders(players);
+  const lbs = edgeSplit(mates.filter((player) => player.role === "LB"));
+  const dts = edgeSplit(mates.filter((player) => player.role === "DT"));
+  let best: DefenseBody | null = null;
+  let bestGroup = 6;
+  let bestLateral = 0;
+  for (const player of mates) {
+    if (from && player.id === from.id) continue;
+    const clock = contactOf(player);
+    if (clock.pancake > 0 || clock.recover > 0) continue;
+    const group = switchGroup(player, lbs, dts);
+    if (group > 5) continue;
+    const lateral = Math.abs(player.x - carrier.x);
+    const better = !best || group < bestGroup || (group === bestGroup && lateral < bestLateral);
+    if (!better) continue;
+    best = player;
+    bestGroup = group;
+    bestLateral = lateral;
+  }
+  return best;
+}
+
+/** Live Y. Chase-down aims. Every other press uses the position-group order. */
+function switchLive(players: readonly DefenseBody[], carrier: Player, hold: DefenseStick, from: DefenseBody | null) {
+  if (chaseDown(players, carrier)) {
+    const aim = aimVector(hold);
+    if (!aim) return;
+    select(players, pointSelect(players, aim.x, aim.y, from), false);
+    return;
+  }
+  select(players, autoDetect(players, carrier, from), false);
+}
+
 function shed(players: readonly DefenseBody[], me: DefenseBody) {
   const clock = contactOf(me);
   let blocker: DefenseBody | null = null;
@@ -616,10 +718,7 @@ export function tickDefenseLive(
   const meBefore = current(players);
   const stickMag = Math.hypot(hold.x, hold.yard);
   const changeEdge = hold.changeOn && !changeDown;
-  // Shed stays on Y while a block is on, even if the stick is pushing. A free defender
-  // uses that same press to point or take the next teammate.
-  const shedPlain = changeEdge && !!meBefore && defenderEngaged(players, meBefore);
-  if (changeEdge && !shedPlain) chooseDefender(players, hold, meBefore, false);
+  if (changeEdge) switchLive(players, carrier, hold, meBefore);
   changeDown = hold.changeOn;
   const me = current(players);
   if (!me || finished) {
@@ -632,7 +731,9 @@ export function tickDefenseLive(
     return result();
   }
   strafeNow = hold.strafe;
-  if (hold.shed && !shedEdge && !(changeEdge && !shedPlain)) shed(players, me);
+  // Y is switch-only, including the pad button that also reports truck.
+  // V still sheds. A truck press that is not the switch button still sheds.
+  if (hold.shed && !shedEdge && !hold.changeOn) shed(players, me);
   shedEdge = hold.shed;
   if (hold.wrap && !wrapEdge) tryWrap(me, carrier, "lt");
   if (hold.punch && !punchEdge) tryWrap(me, carrier, "rt");
@@ -818,7 +919,7 @@ export function defenseSelfCheck() {
   beginDefenseLive(roster);
   tickDefenseLive(roster, carrier, idleStick, 0.016, 50);
   tickDefenseLive(roster, carrier, { ...idleStick, changeOn: true }, 0.016, 50);
-  if (readUserDefenderId() === saved) throw new Error("live switch leaves the snap defender");
+  if (readUserDefenderId() !== "lb-0") throw new Error("live switch takes the interior linebacker");
   tickDefenseLive(roster, carrier, idleStick, 0.016, 50);
   const xHeld = readUserDefenderId();
   tickDefenseLive(roster, carrier, { ...idleStick, dive: true }, 0.016, 50);
@@ -826,9 +927,15 @@ export function defenseSelfCheck() {
   const blocked = roster.find((player) => player.id === xHeld);
   if (!blocked) throw new Error("live defender missing");
   contactOf(blocked).engage = 0.4;
+  tickDefenseLive(roster, carrier, { ...idleStick, shed: true }, 0.016, 50);
+  if (readUserDefenderId() !== xHeld) throw new Error("shed does not change player");
+  if (contactOf(blocked).engage !== 0) throw new Error("shed clears the block");
+  contactOf(blocked).engage = 0.4;
+  tickDefenseLive(roster, carrier, idleStick, 0.016, 50);
   tickDefenseLive(roster, carrier, { ...idleStick, changeOn: true, shed: true, yard: 1 }, 0.016, 50);
-  if (readUserDefenderId() !== xHeld) throw new Error("Y on a block sheds instead of switching");
-  if (contactOf(blocked).engage !== 0) throw new Error("Y sheds the block");
+  if (readUserDefenderId() === xHeld) throw new Error("Y changes player during a play");
+  if (contactOf(blocked).engage === 0) throw new Error("Y sheds");
+  contactOf(blocked).engage = 0;
   seatDefender(roster);
   if (readUserDefenderId() !== saved) throw new Error("next huddle restores the snap defender");
   resetDefense();
@@ -851,6 +958,98 @@ export function defenseSelfCheck() {
   if (tickDefenseHuddle(roster, { ...idleStick, padA: true }, 0.016, 50) !== "hold") throw new Error("A held through a block is not a new press");
   tickDefenseHuddle(roster, idleStick, 0.016, 50);
   if (tickDefenseHuddle(roster, { ...idleStick, padA: true }, 0.016, 50) !== "snap") throw new Error("A snaps");
+  resetDefense();
+  const live = [
+    body("dt-0", "DT", 20, 51, null),
+    body("dt-1", "DT", 37, 51, null),
+    body("dt-2", "DT", 55, 51, null),
+    body("lb-0", "LB", 36, 55, null),
+    body("lb-1", "LB", 18, 55, null),
+    body("db-0", "DB", 12, 53, "CB"),
+    body("db-1", "DB", 30, 62, "SS"),
+    body("db-5", "DB", 50, 70, "FS"),
+  ];
+  const runner: Player = {
+    id: "hb-1",
+    team: "off",
+    role: "HB",
+    x: 37,
+    yard: 48,
+    facingX: 0,
+    facingYard: 1,
+    controlled: true,
+    hop: 0,
+  };
+  seatDefender(live);
+  beginDefenseLive(live);
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true, x: -1 }, 0.016, 50);
+  if (readUserDefenderId() !== "db-1") throw new Error("auto switch takes the nearer interior DB");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  const freeSafety = live.find((player) => player.id === "db-5");
+  const strong = live.find((player) => player.id === "db-1");
+  const mike = live.find((player) => player.id === "lb-0");
+  const will = live.find((player) => player.id === "lb-1");
+  const corner = live.find((player) => player.id === "db-0");
+  const nose = live.find((player) => player.id === "dt-1");
+  const end = live.find((player) => player.id === "dt-0");
+  const otherEnd = live.find((player) => player.id === "dt-2");
+  if (!freeSafety || !strong || !mike || !will || !corner || !nose || !end || !otherEnd) throw new Error("switch roster");
+  contactOf(freeSafety).pancake = 0.7;
+  contactOf(strong).pancake = 0.7;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true, x: -1 }, 0.016, 50);
+  if (readUserDefenderId() !== "lb-0") throw new Error("auto switch falls through to the interior linebacker");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  contactOf(mike).pancake = 0.7;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true }, 0.016, 50);
+  if (readUserDefenderId() !== "lb-1") throw new Error("auto switch falls through to the exterior linebacker");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  contactOf(will).recover = 0.4;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true, x: 1 }, 0.016, 50);
+  if (readUserDefenderId() !== "db-0") throw new Error("auto switch falls through to the exterior DB");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  contactOf(corner).pancake = 0.7;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true }, 0.016, 50);
+  if (readUserDefenderId() !== "dt-0") throw new Error("exterior tackles beat the nose, nearer one wins");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  contactOf(end).recover = 0.4;
+  contactOf(otherEnd).recover = 0.4;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true }, 0.016, 50);
+  if (readUserDefenderId() !== "dt-1") throw new Error("auto switch falls through to the interior tackle");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  const held = live.find((player) => player.id === readUserDefenderId());
+  if (!held) throw new Error("held defender");
+  contactOf(freeSafety).pancake = 0.7;
+  contactOf(strong).pancake = 0.7;
+  contactOf(mike).pancake = 0.7;
+  contactOf(will).recover = 0.4;
+  contactOf(corner).pancake = 0.7;
+  contactOf(end).recover = 0.4;
+  contactOf(otherEnd).recover = 0.4;
+  contactOf(held).engage = 0.55;
+  tickDefenseLive(live, runner, { ...idleStick, changeOn: true, shed: true }, 0.016, 50);
+  if (readUserDefenderId() !== held.id) throw new Error("Y stays when every other defender is blocked");
+  if (contactOf(held).engage !== 0.55) throw new Error("Y sheds an engaged defender");
+  tickDefenseLive(live, runner, idleStick, 0.016, 50);
+  tickDefenseLive(live, runner, { ...idleStick, shed: true }, 0.016, 50);
+  if (contactOf(held).engage !== 0) throw new Error("V sheds");
+  resetDefense();
+  const chase = [
+    body("dt-0", "DT", 30, 51, null),
+    body("dt-1", "DT", 45, 51, null),
+    body("lb-0", "LB", 37, 55, null),
+    body("db-0", "DB", 12, 53, "CB"),
+    body("db-5", "DB", 37.5, 63, "FS"),
+  ];
+  seatDefender(chase);
+  beginDefenseLive(chase);
+  const past: Player = { ...runner, id: "hb-2", x: 37, yard: 80 };
+  tickDefenseLive(chase, past, idleStick, 0.016, 50);
+  tickDefenseLive(chase, past, { ...idleStick, changeOn: true, x: 1 }, 0.016, 50);
+  if (readUserDefenderId() !== "dt-1") throw new Error("chase-down aims from the current defender");
+  tickDefenseLive(chase, past, idleStick, 0.016, 50);
+  tickDefenseLive(chase, past, { ...idleStick, changeOn: true }, 0.016, 50);
+  if (readUserDefenderId() !== "dt-1") throw new Error("chase-down without an aim stays put");
   if (hitDecision(-0.2, 4, false) === "connect") throw new Error("narrow hit window");
   if (hitDecision(-0.2, 4, true) !== "connect") throw new Error("strafe widens the hit window");
   if (hitDecision(-0.8, 2, true) !== "whiff") throw new Error("a backward flick whiffs");

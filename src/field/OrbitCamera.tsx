@@ -85,6 +85,14 @@ function driveReplay(camera: PerspectiveCamera, orbit: OrbitControls, dt: number
     yaw += right.x * 1.1 * step;
     pitch += right.y * 0.7 * step;
   }
+  if (readReplayPad(3) || replayHeld().has("KeyY")) {
+    const pad = readBasicPad();
+    if (pad) {
+      const left = radialDeadzone(pad.x, -pad.y);
+      yaw += left.x * 1.1 * step;
+      pitch += left.y * 0.7 * step;
+    }
+  }
   dist = Math.max(2, Math.min(260, dist));
   pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, pitch));
   const next = offsetFromSphere({ dist, yaw, pitch });
@@ -346,9 +354,12 @@ function readTapeCam(keys: ReadonlySet<string>): TapeCamInput {
   const yHeld = readReplayPad(3) || keys.has("KeyY");
   const steerPlayer = tapeEditOwnsMove() && !yHeld;
   const right = readRightStick();
-  const orbitStick = yHeld && (right.x !== 0 || right.y !== 0);
-  let panX = orbitStick ? right.x : 0;
-  let panY = orbitStick ? right.y : 0;
+  const leftPad = readBasicPad();
+  const left = yHeld && leftPad ? radialDeadzone(leftPad.x, -leftPad.y) : { x: 0, y: 0 };
+  const orbitRight = yHeld && (right.x !== 0 || right.y !== 0);
+  const orbitStick = orbitRight || left.x !== 0 || left.y !== 0;
+  let panX = (orbitRight ? right.x : 0) + left.x;
+  let panY = (orbitRight ? right.y : 0) + left.y;
   if (!steerPlayer && !orbitStick) {
     panX += (keys.has("KeyD") ? 1 : 0) - (keys.has("KeyA") ? 1 : 0);
     panY += (keys.has("KeyW") ? 1 : 0) - (keys.has("KeyS") ? 1 : 0);

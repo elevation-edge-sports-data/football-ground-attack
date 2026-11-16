@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
   BufferGeometry,
@@ -14,7 +14,7 @@ import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { worldFromField } from "./frame";
-import { readMode } from "./sim/boot";
+import { readBoard, readMode, subscribeBoard } from "./sim/boot";
 import {
   ART_Y,
   defenseArtAlpha,
@@ -72,10 +72,13 @@ function addStroke(group: Group, items: ArtLive[], stroke: ArtStroke) {
     dashed: !!stroke.dashed,
     dashSize: 0.7,
     gapSize: 0.45,
+    polygonOffset: true,
+    polygonOffsetFactor: -16,
+    polygonOffsetUnits: -16,
   });
   const line = new Line2(geometry, material);
   line.frustumCulled = false;
-  line.renderOrder = 3;
+  line.renderOrder = 6;
   if (stroke.dashed) line.computeLineDistances();
   group.add(line);
   items.push({ object: line, material, fade: stroke.fade, gain: stroke.gain });
@@ -95,10 +98,13 @@ function addHead(group: Group, items: ArtLive[], head: ArtHead) {
     toneMapped: false,
     side: DoubleSide,
     premultipliedAlpha: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -16,
+    polygonOffsetUnits: -16,
   });
   const mesh = new Mesh(geometry, material);
   mesh.frustumCulled = false;
-  mesh.renderOrder = 3;
+  mesh.renderOrder = 6;
   group.add(mesh);
   items.push({ object: mesh, material, fade: head.fade, gain: head.gain });
 }
@@ -126,6 +132,9 @@ function addZone(group: Group, items: ArtLive[], zone: ArtZone) {
     toneMapped: false,
     side: DoubleSide,
     premultipliedAlpha: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -16,
+    polygonOffsetUnits: -16,
   });
   const fill = new Mesh(new CircleGeometry(1, 28), fillMat);
   const [x, y, z] = worldFromField(zone.x, zone.yard, ART_Y);
@@ -134,7 +143,7 @@ function addZone(group: Group, items: ArtLive[], zone: ArtZone) {
   fill.rotation.x = -Math.PI / 2;
   fill.scale.set(zone.rx, zone.ry, 1);
   fill.frustumCulled = false;
-  fill.renderOrder = 3;
+  fill.renderOrder = 6;
   group.add(fill);
   items.push({ object: fill, material: fillMat, fade: "zone", gain: zone.gain });
 
@@ -149,10 +158,13 @@ function addZone(group: Group, items: ArtLive[], zone: ArtZone) {
     toneMapped: false,
     depthWrite: false,
     premultipliedAlpha: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -16,
+    polygonOffsetUnits: -16,
   });
   const ring = new Line2(ringGeo, ringMat);
   ring.frustumCulled = false;
-  ring.renderOrder = 3;
+  ring.renderOrder = 6;
   group.add(ring);
   items.push({ object: ring, material: ringMat, fade: "zone", gain: zone.gain, stroke: true });
 }
@@ -194,6 +206,8 @@ export function PlayArt({
   age: { current: number };
   rosterTick: number;
 }) {
+  const board = useSyncExternalStore(subscribeBoard, readBoard);
+  const hide = board.replay && (board.mode === "game" || board.mode === "practice");
   const holder = useRef<Group>(null);
   const live = useRef<{ group: Group; items: ArtLive[]; token: number } | null>(null);
 
@@ -213,9 +227,18 @@ export function PlayArt({
   };
 
   useLayoutEffect(() => {
+    if (hide) {
+      const current = live.current;
+      if (current) {
+        holder.current?.remove(current.group);
+        disposeGroup(current.group);
+        live.current = null;
+      }
+      return;
+    }
     install();
     // rosterTick is the snap. The model ref is updated before this render.
-  }, [rosterTick]);
+  }, [rosterTick, hide]);
   useLayoutEffect(() => {
     return () => {
       const holderGroup = holder.current;
@@ -227,6 +250,7 @@ export function PlayArt({
   }, []);
 
   useFrame(() => {
+    if (hide) return;
     const next = modelRef.current;
     if (live.current?.token !== next.token) install();
     const current = live.current;
@@ -237,6 +261,7 @@ export function PlayArt({
     if (show) applyAge(current.items, age.current, practice);
   });
 
+  if (hide) return null;
   return <group ref={holder} />;
 }
 

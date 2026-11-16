@@ -1597,7 +1597,7 @@ const REPLAY_CSS = `
 }
 .formation-lib .madden-replay.is-locked .madden-replay-track { pointer-events: none; cursor: default; }
 .formation-lib .madden-replay-lane { position: relative; height: 100%; overflow: hidden; }
-.formation-lib .madden-replay-fill { height: 100%; width: 0; background: #5a1021; box-shadow: inset 0 1px 0 rgba(255,255,255,0.75); }
+.formation-lib .madden-replay-fill { height: 100%; width: 0; background: #FA4616; box-shadow: inset 0 1px 0 rgba(255,255,255,0.75); }
 .formation-lib .madden-replay-pct {
   min-width: 3.2em; font-family: var(--font-display); font-size: 1.15rem; font-weight: 700;
   letter-spacing: 0.04em; text-align: right; color: #f4f4f4;
