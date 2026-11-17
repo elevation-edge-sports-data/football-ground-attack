@@ -306,6 +306,8 @@ export type PracticeDot = {
 export type PlayDiagram = {
   los: number;
   snapX: number;
+  /** Attack direction this diagram was built for. The card turns with it. */
+  attackNorth: boolean;
   art: SnapArt;
   dots: PracticeDot[];
 };
@@ -315,6 +317,7 @@ export function playDiagram(play: AssignedPlay, los: number, snapX: number): Pla
   return {
     los,
     snapX,
+    attackNorth: readAttackNorth(),
     art: buildSnapArt(play, los),
     dots: play.players.map((player) => {
       if (player.team === "def") {

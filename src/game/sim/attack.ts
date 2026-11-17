@@ -12,11 +12,16 @@ let north = true;
 /** Classic and high cameras. Quarter changes move this. A score does not. */
 let cameraNorth = true;
 /**
- * Drill and Practice only. YOU starts as the home team.
- * Game ignores this and keeps the quarter alternation on `north`.
+ * YOU starts as the home team. Away mirrors the attack, the camera, and the kit.
+ * The stored `north` stays the game base so quarters and possession keep their sides.
  */
 let youHome = true;
-let youHomeApplies = false;
+let youHomeApplies = true;
+const youHomeListeners = new Set<() => void>();
+
+function notifyYouHome() {
+  for (const listener of youHomeListeners) listener();
+}
 
 /** Direction the offense is actually attacking. The stored `north` stays the game base. */
 function playingNorth(): boolean {
@@ -40,7 +45,7 @@ export function attackSign(): 1 | -1 {
   return playingNorth() ? 1 : -1;
 }
 
-/** True when the YOU kit is the home team. Game always treats YOU as home. */
+/** True when the YOU kit is the home team. */
 export function youKitIsHome(): boolean {
   return !youHomeApplies || youHome;
 }
@@ -49,13 +54,30 @@ export function readYouHome(): boolean {
   return youHome;
 }
 
-export function setYouHome(on: boolean) {
-  youHome = on;
+/** Fires when home/away changes the kit or the attack mirror. */
+export function subscribeYouHome(listener: () => void) {
+  youHomeListeners.add(listener);
+  return () => {
+    youHomeListeners.delete(listener);
+  };
 }
 
-/** Off in Game, so a Drill or Practice flip does not move the game's direction. */
+export function setYouHome(on: boolean) {
+  if (youHome === on) return;
+  youHome = on;
+  notifyYouHome();
+}
+
+/** When off, the away choice does not mirror the field. Game and the other modes leave it on. */
 export function setYouHomeApplies(on: boolean) {
+  if (youHomeApplies === on) return;
   youHomeApplies = on;
+  notifyYouHome();
+}
+
+/** Possession direction before the home/away mirror. Home attacks this way in the first quarter. */
+export function readBaseAttackNorth() {
+  return north;
 }
 
 export function setAttackNorth(on: boolean) {

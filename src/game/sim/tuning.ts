@@ -7,6 +7,8 @@
 import { readPrefs, writePrefs } from "../prefs";
 export const SLIDER_MIN = 0.5;
 export const SLIDER_MAX = 2;
+/** Speed alone runs past the other sliders. */
+export const SPEED_SLIDER_MAX = 3;
 export const SLIDER_STEP = 0.05;
 
 /** Labeled 1.00× runs at 1.10. The whole scale is +10%. */
@@ -25,9 +27,9 @@ export type SliderSnap = {
   breakTackle: number;
 };
 
-function savedLabeled(value: unknown): number | null {
+function savedLabeled(value: unknown, max = SLIDER_MAX): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const clamped = Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, value));
+  const clamped = Math.min(max, Math.max(SLIDER_MIN, value));
   const steps = Math.round((clamped - SLIDER_MIN) / SLIDER_STEP);
   return Number((SLIDER_MIN + steps * SLIDER_STEP).toFixed(2));
 }
@@ -36,7 +38,7 @@ const savedTuning = readPrefs().tuning;
 let youLabeled = savedLabeled(savedTuning?.you) ?? 1;
 let matesLabeled = savedLabeled(savedTuning?.mates) ?? 1;
 let cpuLabeled = savedLabeled(savedTuning?.cpu) ?? 1;
-let speedLabeled = savedLabeled(savedTuning?.speed) ?? 1;
+let speedLabeled = savedLabeled(savedTuning?.speed, SPEED_SLIDER_MAX) ?? 1;
 let breakBlockLabeled = savedLabeled(savedTuning?.breakBlock) ?? 1;
 let breakTackleLabeled = savedLabeled(savedTuning?.breakTackle) ?? 1;
 /** True when the user is the ball carrier. Defense leaves the runner on CPU strength. */
@@ -53,9 +55,9 @@ let snap: SliderSnap = {
 
 const listeners = new Set<() => void>();
 
-function clampLabeled(value: number): number {
+function clampLabeled(value: number, max = SLIDER_MAX): number {
   if (!Number.isFinite(value)) return 1;
-  return Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, value));
+  return Math.min(max, Math.max(SLIDER_MIN, value));
 }
 
 function publish() {
@@ -71,7 +73,7 @@ function publish() {
 }
 
 function write(slot: "you" | "mates" | "cpu" | "speed" | "breakBlock" | "breakTackle", value: number) {
-  const next = clampLabeled(value);
+  const next = clampLabeled(value, slot === "speed" ? SPEED_SLIDER_MAX : SLIDER_MAX);
   if (slot === "you" && next === youLabeled) return;
   if (slot === "mates" && next === matesLabeled) return;
   if (slot === "cpu" && next === cpuLabeled) return;

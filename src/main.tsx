@@ -161,7 +161,13 @@ function App() {
             {practice ? null : <span>{board.downText}</span>}
             <BallOnReadout
               yard={board.ballOn}
-              home={board.mode === "game" ? board.homePossession : readAttackNorth()}
+              home={
+                board.mode === "game"
+                  ? youKitIsHome()
+                    ? board.homePossession
+                    : !board.homePossession
+                  : readAttackNorth()
+              }
               tail={practice ? "" : formatClock(board.clock)}
             />
           </div>

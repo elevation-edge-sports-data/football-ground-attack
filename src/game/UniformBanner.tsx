@@ -210,7 +210,7 @@ export function TeamScore() {
   const board = useSyncExternalStore(subscribeBoard, readBoard);
   const you = kitById(selection.offId);
   const cpu = kitById(selection.defId);
-  const youAway = board.mode !== "game" && !youKitIsHome();
+  const youAway = !youKitIsHome();
   const leftKit = youAway ? cpu : you;
   const rightKit = youAway ? you : cpu;
   const leftScore = youAway ? board.cpuScore : board.youScore;

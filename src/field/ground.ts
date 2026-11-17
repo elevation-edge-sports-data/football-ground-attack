@@ -86,11 +86,10 @@ function pushBand(
  * Five-yard stripes mirror across the 50. Yards 45–55 are one quad.
  * Each end zone is one quad. End-zone art is a separate mesh. Off leaves this color as the end zone.
  */
-export function buildTurfGeometry(surface: SurfaceId) {
+export function buildTurfGeometry(surface: SurfaceId, width = FIELD.width) {
   const positions: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
-  const width = FIELD.width;
   const endZone = stripeColor(surface, SOUTH_BACK);
 
   pushBand(positions, colors, indices, width, SOUTH_BACK, 0, endZone);
@@ -205,9 +204,9 @@ const MOUNTAIN_PEAKS: [number, number][] = [
 ];
 
 /** Peak loop in the flat shape, before it is laid on the field. Winding matches the fill. */
-function mountainContour(end: "south" | "north"): [number, number][] {
+function mountainContour(end: "south" | "north", width: number): [number, number][] {
   const sign = end === "south" ? -1 : 1;
-  const pts = MOUNTAIN_PEAKS.map(([x, h]) => [x * FIELD.width, sign * h * FIELD.endZone] as [number, number]);
+  const pts = MOUNTAIN_PEAKS.map(([x, h]) => [x * width, sign * h * FIELD.endZone] as [number, number]);
   // North peaks sit at +Y, so the left-to-right peak order is clockwise and is reversed.
   // South negates Y, which flips that winding back to counter-clockwise. +Z then becomes +Y.
   if (sign > 0) {
@@ -229,8 +228,8 @@ function layEndZoneShape(geometry: BufferGeometry, end: "south" | "north", y: nu
  * Secondary-color mountain fill for one end.
  * Shape Y grows toward the back of that end, then lies down so the normal is +Y.
  */
-export function buildMountainGeometry(end: "south" | "north") {
-  const loop = mountainContour(end);
+export function buildMountainGeometry(end: "south" | "north", width = FIELD.width) {
+  const loop = mountainContour(end, width);
   const shape = new Shape();
   shape.moveTo(loop[0]![0], loop[0]![1]);
   for (let i = 1; i < loop.length; i++) shape.lineTo(loop[i]![0], loop[i]![1]);
@@ -244,11 +243,11 @@ export function buildMountainGeometry(end: "south" | "north") {
  * Primary fill behind the peaks, from the skyline to the back of the end zone.
  * It stops on the silhouette, so the mountain color is not painted over it.
  */
-export function buildMountainBackdrop(end: "south" | "north") {
+export function buildMountainBackdrop(end: "south" | "north", width = FIELD.width) {
   const sign = end === "south" ? -1 : 1;
   const back = sign * FIELD.endZone;
-  const skyline = MOUNTAIN_PEAKS.map(([x, h]) => new Vector2(x * FIELD.width, sign * h * FIELD.endZone));
-  const pts = [...skyline, new Vector2(FIELD.width, back), new Vector2(0, back)];
+  const skyline = MOUNTAIN_PEAKS.map(([x, h]) => new Vector2(x * width, sign * h * FIELD.endZone));
+  const pts = [...skyline, new Vector2(width, back), new Vector2(0, back)];
   const ring = ShapeUtils.isClockWise(pts) ? pts.slice().reverse() : pts;
   const shape = new Shape();
   shape.moveTo(ring[0]!.x, ring[0]!.y);
@@ -284,14 +283,14 @@ function pushDiamond(
 }
 
 /** Eight diamonds per end. Even cells are the home primary, odd cells the secondary. v10 `n = 8`. */
-export function buildDiamondGeometry(primary: string, secondary: string) {
+export function buildDiamondGeometry(primary: string, secondary: string, width = FIELD.width) {
   const positions: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
   const pri = new Color(primary);
   const sec = new Color(secondary);
   const n = 8;
-  const w = FIELD.width / n;
+  const w = width / n;
   const ends: [number, number][] = [
     [0, FIELD.endZone],
     [-FIELD.length, -NORTH_BACK],
@@ -310,10 +309,10 @@ export function buildDiamondGeometry(primary: string, secondary: string) {
 }
 
 /** White diamond outline. v10 strokes the same four edges. */
-export function buildDiamondEdges() {
+export function buildDiamondEdges(width = FIELD.width) {
   const out: number[] = [];
   const n = 8;
-  const w = FIELD.width / n;
+  const w = width / n;
   const y = 0.018;
   const ends: [number, number][] = [
     [0, FIELD.endZone],
@@ -352,14 +351,13 @@ export type FieldMarkings = {
 };
 
 /** Screen-space strokes: 5-yard lines and hashes, 10-yard lines and borders, the 20–80 sideline. */
-export function buildMarkings(): FieldMarkings {
+export function buildMarkings(width = FIELD.width): FieldMarkings {
   const minor: number[] = [];
   const major: number[] = [];
   const boundary: number[] = [];
-  const width = FIELD.width;
-  const left = hashLeft();
-  const right = hashRight();
-  const inner = hashReach();
+  const left = hashLeft(width);
+  const right = hashRight(width);
+  const inner = hashReach(width);
 
   for (let yard = 0; yard <= FIELD.length; yard += 5) {
     const bucket = yard % 10 === 0 ? major : minor;

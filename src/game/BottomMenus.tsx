@@ -1,17 +1,28 @@
-import { useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { CAM_MODES, readCamMode, setCamMode, subscribeCamMode, type CamMode } from "./cameraMode";
 import {
   readFieldLook,
   setEzArt,
+  setEzCustom,
+  setEzText,
   setEzTone,
+  setFieldWidth,
+  setLogoCustom,
+  setLogoMode,
+  setLogoZoom,
   setSurface,
   subscribeFieldLook,
-  toggleLogo,
+  LOGO_ZOOM_MAX,
+  LOGO_ZOOM_MIN,
+  LOGO_ZOOM_STEP,
   type EzArtId,
+  type EzTextMode,
   type EzTone,
+  type LogoMode,
 } from "./fieldLook";
+import { FIELD_WIDTH_MAX, FIELD_WIDTH_MIN, FIELD_WIDTH_STEP } from "../field/spec";
 import { HomeAwayButton, ModeToggle, PlaySideButton } from "./ModeToggle";
-import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
+import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, relayoutFieldWidth, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
 import { readYouHome } from "./sim/attack";
 import {
   readTuning,
@@ -24,12 +35,13 @@ import {
   SLIDER_MAX,
   SLIDER_MIN,
   SLIDER_STEP,
+  SPEED_SLIDER_MAX,
   subscribeTuning,
 } from "./sim/tuning";
 import { beginTape, readTapeOn, readTapeReady, stopTape, subscribeTape, subscribeTapeReady } from "./tapeReplay";
 
 type MenuId = "camera" | "field" | "controller" | "settings";
-type FieldPanel = "surface" | "ezart";
+type FieldPanel = "surface" | "ezart" | "width" | "eztext" | "logo";
 
 const dock: CSSProperties = {
   position: "fixed",
@@ -129,7 +141,7 @@ export function BottomMenus() {
         {menu === "settings" ? <SettingsPanel /> : null}
         <div style={row}>
           <ModeToggle mode={board.mode} embedded />
-          {board.mode === "game" ? null : <HomeAwayButton home={readYouHome()} />}
+          <HomeAwayButton home={readYouHome()} />
           {board.mode === "game" ? null : <PlaySideButton side={board.side} />}
           <button
             type="button"
@@ -163,7 +175,18 @@ export function BottomMenus() {
           <div style={{ position: "relative" }}>
             {menu === "field" ? (
               <div role="group" aria-label="Field" style={popRow("center")}>
-                <IdleButton label="Width" />
+                <div style={{ position: "relative" }}>
+                  {fieldPanel === "width" ? <WidthRow width={look.width} /> : null}
+                  <button
+                    type="button"
+                    style={choiceStyle(fieldPanel === "width")}
+                    aria-expanded={fieldPanel === "width"}
+                    onMouseDown={holdFocus}
+                    onClick={() => toggleField("width")}
+                  >
+                    Width
+                  </button>
+                </div>
                 <div style={{ position: "relative" }}>
                   {fieldPanel === "surface" ? (
                     <div role="group" aria-label="Surface" style={popRow("center")}>
@@ -196,16 +219,30 @@ export function BottomMenus() {
                     EZ art
                   </button>
                 </div>
-                <IdleButton label="EZ text" />
-                <button
-                  type="button"
-                  style={choiceStyle(look.logo)}
-                  aria-pressed={look.logo}
-                  onMouseDown={holdFocus}
-                  onClick={toggleLogo}
-                >
-                  Logo
-                </button>
+                <div style={{ position: "relative" }}>
+                  {fieldPanel === "eztext" ? <EzTextRow mode={look.ezText} custom={look.ezCustom} /> : null}
+                  <button
+                    type="button"
+                    style={choiceStyle(fieldPanel === "eztext")}
+                    aria-expanded={fieldPanel === "eztext"}
+                    onMouseDown={holdFocus}
+                    onClick={() => toggleField("eztext")}
+                  >
+                    EZ text
+                  </button>
+                </div>
+                <div style={{ position: "relative" }}>
+                  {fieldPanel === "logo" ? <LogoRow mode={look.logoMode} zoom={look.logoZoom} /> : null}
+                  <button
+                    type="button"
+                    style={choiceStyle(fieldPanel === "logo")}
+                    aria-expanded={fieldPanel === "logo"}
+                    onMouseDown={holdFocus}
+                    onClick={() => toggleField("logo")}
+                  >
+                    Logo
+                  </button>
+                </div>
               </div>
             ) : null}
             <button
@@ -328,7 +365,7 @@ function SettingsPanel() {
         />
       </div>
       <div style={tuneCol}>
-        <TuneSlider label="Speed" value={tune.speed} suffix="×" onChange={setSpeed} />
+        <TuneSlider label="Speed" value={tune.speed} suffix="×" max={SPEED_SLIDER_MAX} onChange={setSpeed} />
         <TuneSlider label="Break block" value={tune.breakBlock} suffix="" onChange={setBreakBlock} />
         <TuneSlider label="Break tackle" value={tune.breakTackle} suffix="" onChange={setBreakTackle} />
       </div>
@@ -341,12 +378,14 @@ function TuneSlider({
   title,
   value,
   suffix,
+  max = SLIDER_MAX,
   onChange,
 }: {
   label: string;
   title?: string;
   value: number;
   suffix: string;
+  max?: number;
   onChange: (labeled: number) => void;
 }) {
   return (
@@ -355,7 +394,7 @@ function TuneSlider({
       <input
         type="range"
         min={SLIDER_MIN}
-        max={SLIDER_MAX}
+        max={max}
         step={SLIDER_STEP}
         value={value}
         aria-label={label}
@@ -404,11 +443,181 @@ function EzArtRow({ art, tone }: { art: EzArtId; tone: EzTone }) {
   );
 }
 
-function IdleButton({ label }: { label: string }) {
+const widthSliderRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(140px, 200px) auto",
+  gap: 8,
+  alignItems: "center",
+  minHeight: 44,
+  minWidth: 180,
+};
+
+/** Same face as the WIDTH button. The unit stays YD. */
+const widthSliderValue: CSSProperties = {
+  ...tuneValue,
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 16,
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+};
+
+function WidthRow({ width }: { width: number }) {
   return (
-    <button type="button" style={choiceStyle(false)} onMouseDown={holdFocus}>
-      {label}
-    </button>
+    <div role="group" aria-label="Field width" style={popRow("start")}>
+      <label style={widthSliderRow}>
+        <input
+          type="range"
+          min={FIELD_WIDTH_MIN}
+          max={FIELD_WIDTH_MAX}
+          step={FIELD_WIDTH_STEP}
+          value={width}
+          aria-label="Field width"
+          style={tuneInput}
+          onChange={(event) => {
+            const yards = Number(event.target.value);
+            if (setFieldWidth(yards)) relayoutFieldWidth();
+          }}
+        />
+        <b style={widthSliderValue}>{width} YD</b>
+      </label>
+    </div>
+  );
+}
+
+const ezInput: CSSProperties = {
+  minHeight: 44,
+  width: "16rem",
+  maxWidth: "70vw",
+  padding: "0 12px",
+  borderRadius: 6,
+  border: "1px solid #e8ece6",
+  background: "#171e28",
+  color: "#e8ece6",
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 16,
+  fontWeight: 700,
+  letterSpacing: "0.02em",
+};
+
+function EzCustomInput({ value }: { value: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      el.focus();
+    }
+  }, []);
+  return (
+    <input
+      ref={ref}
+      aria-label="Custom"
+      maxLength={64}
+      value={value}
+      spellCheck={false}
+      onChange={(event) => setEzCustom(event.target.value)}
+      style={ezInput}
+    />
+  );
+}
+
+function EzTextRow({ mode, custom }: { mode: EzTextMode; custom: string }) {
+  return (
+    <div role="group" aria-label="End zone text" style={popRow("center")}>
+      <PickButton label="Elevation Edge" on={mode === "ee"} onPick={() => setEzText("ee")} />
+      <PickButton label="Off" on={mode === "off"} onPick={() => setEzText("off")} />
+      <div style={{ position: "relative" }}>
+        {mode === "custom" ? (
+          <div role="group" aria-label="Custom end zone text" style={popRow("center")}>
+            <EzCustomInput value={custom} />
+          </div>
+        ) : null}
+        <PickButton label="Custom" on={mode === "custom"} onPick={() => setEzText("custom")} />
+      </div>
+    </div>
+  );
+}
+
+const logoZoomRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "3.4rem minmax(88px, 140px) auto",
+  gap: 4,
+  alignItems: "center",
+  minHeight: 44,
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#8b9688",
+};
+
+const logoFileInput: CSSProperties = {
+  position: "fixed",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: 0,
+  opacity: 0,
+  pointerEvents: "none",
+};
+
+function LogoRow({ mode, zoom }: { mode: LogoMode; zoom: number }) {
+  const file = useRef<HTMLInputElement>(null);
+  return (
+    <div role="group" aria-label="Midfield logo" style={popRow("end")}>
+      <PickButton label="EE" on={mode === "ee"} onPick={() => setLogoMode("ee")} />
+      <PickButton label="Off" on={mode === "off"} onPick={() => setLogoMode("off")} />
+      <button
+        type="button"
+        style={choiceStyle(mode === "custom")}
+        aria-pressed={mode === "custom"}
+        onClick={() => {
+          setLogoMode("custom");
+          file.current?.click();
+        }}
+      >
+        Custom
+      </button>
+      {mode !== "off" ? (
+        <label style={logoZoomRow}>
+          <span>Zoom</span>
+          <input
+            type="range"
+            min={LOGO_ZOOM_MIN}
+            max={LOGO_ZOOM_MAX}
+            step={LOGO_ZOOM_STEP}
+            value={zoom}
+            aria-label="Midfield logo zoom"
+            style={tuneInput}
+            onChange={(event) => setLogoZoom(Number(event.target.value))}
+          />
+          <b style={tuneValue}>{zoom.toFixed(2)}×</b>
+        </label>
+      ) : null}
+      <input
+        ref={file}
+        type="file"
+        accept="image/*"
+        aria-hidden="true"
+        tabIndex={-1}
+        style={logoFileInput}
+        onChange={(event) => {
+          const picked = event.target.files?.[0];
+          event.target.value = "";
+          if (!picked) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const url = reader.result;
+            if (typeof url === "string") setLogoCustom(url);
+          };
+          reader.readAsDataURL(picked);
+        }}
+      />
+    </div>
   );
 }
 

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent a
 import { DoubleSide, NeutralToneMapping } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { FootballField } from "../field/FootballField";
-import { FIELD, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, clamp } from "../field/spec";
+import { FIELD, playMaxX, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, clamp } from "../field/spec";
 import { poseBallSide } from "./carrierPose";
 import { downloadFormationFrame } from "./formationDownload";
 import {
@@ -79,7 +79,7 @@ function seatBall(player: FormationPlayer): { x: number; yard: number } {
   const rightX = facingYard;
   const rightYard = -facingX;
   return {
-    x: clamp(player.x + facingX * BALL_AHEAD + rightX * BALL_RIGHT, PLAY_MIN_X, PLAY_MAX_X),
+    x: clamp(player.x + facingX * BALL_AHEAD + rightX * BALL_RIGHT, PLAY_MIN_X, playMaxX()),
     yard: clamp(player.yard + facingYard * BALL_AHEAD + rightYard * BALL_RIGHT, PLAY_MIN_YARD, PLAY_MAX_YARD),
   };
 }
@@ -417,7 +417,7 @@ export function FormationLibraryView() {
       const side = formationSideOf(entry.frame, viewRef.current);
       if (id === "ball") {
         if (side.ball.owner || dyaw !== 0) return;
-        const x1 = clamp(side.ball.x + dx, PLAY_MIN_X, PLAY_MAX_X);
+        const x1 = clamp(side.ball.x + dx, PLAY_MIN_X, playMaxX());
         const yard1 = clamp(side.ball.yard + dyard, PLAY_MIN_YARD, PLAY_MAX_YARD);
         if (x1 === side.ball.x && yard1 === side.ball.yard) return;
         const edit: FormEdit = { kind: "ball", x0: side.ball.x, yard0: side.ball.yard, x1, yard1 };
@@ -432,7 +432,7 @@ export function FormationLibraryView() {
       const x0 = player.x;
       const yard0 = player.yard;
       const yaw0 = player.yaw;
-      const x1 = clamp(player.x + dx, PLAY_MIN_X, PLAY_MAX_X);
+      const x1 = clamp(player.x + dx, PLAY_MIN_X, playMaxX());
       const yard1 = clamp(player.yard + dyard, PLAY_MIN_YARD, PLAY_MAX_YARD);
       const yaw1 = player.yaw + dyaw;
       if (x1 === x0 && yard1 === yard0 && yaw1 === yaw0) return;

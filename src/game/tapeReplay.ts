@@ -3,7 +3,7 @@
  * Playback is a copy of that ring. The live roster is not rewritten, so exit
  * puts the pause menu back on the real players.
  */
-import { clamp, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD } from "../field/spec";
+import { clamp, playMaxX, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD } from "../field/spec";
 import { yawFromFacing } from "./frame";
 import type { FormationFrame, FormationPlayer, FormationRole, FormationSide } from "./formationLibrary";
 import { readPlaySide } from "./sim/boot";
@@ -447,7 +447,7 @@ export function slideTapeSelection(dx: number, dyard: number) {
   const body = editedBody(selectedId);
   if (!body) return;
   openGesture(body);
-  body.x = clamp(body.x + dx, PLAY_MIN_X, PLAY_MAX_X);
+  body.x = clamp(body.x + dx, PLAY_MIN_X, playMaxX());
   body.yard = clamp(body.yard + dyard, PLAY_MIN_YARD, PLAY_MAX_YARD);
   syncGesture(body);
 }

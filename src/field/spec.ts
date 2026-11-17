@@ -1,15 +1,52 @@
 import type { Object3D } from "three";
+import { readPrefs } from "../game/prefs";
 
 /**
- * Field frame. Yards match field.js (length 100, end zones 10, width 75).
+ * Field frame. Yards match field.js (length 100, end zones 10, default width 75).
  * World X is canvas X: left sideline 0, right sideline width.
  * World Y is up.
  * World Z is −canvas Y, so north (increasing yard line) is −Z.
+ *
+ * Width is live. The WIDTH slider runs 10–100 yards in steps of 5.
  */
+export const FIELD_WIDTH_MIN = 10;
+export const FIELD_WIDTH_MAX = 100;
+export const FIELD_WIDTH_STEP = 5;
+const DEFAULT_WIDTH = 75;
+
+export function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+/** field.js `clampWidth`, with the narrow end raised to 10. A non-number falls back to 75. */
+export function clampFieldWidth(w: unknown) {
+  const n = typeof w === "number" ? w : Number.parseInt(String(w ?? ""), 10);
+  if (!Number.isFinite(n)) return DEFAULT_WIDTH;
+  return clamp(Math.trunc(n), FIELD_WIDTH_MIN, FIELD_WIDTH_MAX);
+}
+
+function widthFromPrefs() {
+  return clampFieldWidth(readPrefs().field?.width ?? DEFAULT_WIDTH);
+}
+
+let width = widthFromPrefs();
+
+export function readFieldWidth() {
+  return width;
+}
+
+/** Live width used by hashes, uprights, and placement. Does not write prefs. */
+export function writeFieldWidth(next: unknown) {
+  width = clampFieldWidth(next);
+  return width;
+}
+
 export const FIELD = {
   length: 100,
   endZone: 10,
-  width: 75,
+  get width() {
+    return width;
+  },
   postGapFrac: 0.082,
   postGapMin: 2.6,
   postGapMax: 9,
@@ -40,13 +77,12 @@ export const SPOT_YARD_MAX = FIELD.length + SPOT_PAST_GOAL;
  */
 export const PLAY_MARGIN = 5;
 export const PLAY_MIN_X = -PLAY_MARGIN;
-export const PLAY_MAX_X = FIELD.width + PLAY_MARGIN;
+/** Right edge of the playable ground. Follows the live field width. */
+export function playMaxX() {
+  return readFieldWidth() + PLAY_MARGIN;
+}
 export const PLAY_MIN_YARD = SOUTH_BACK - PLAY_MARGIN;
 export const PLAY_MAX_YARD = NORTH_BACK + PLAY_MARGIN;
-
-export function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
-}
 
 /** Same gap the canvas uses for hashes and the uprights. */
 export function hashHalf(width = FIELD.width) {

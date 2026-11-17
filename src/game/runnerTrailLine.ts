@@ -48,7 +48,9 @@ export function createTrailLine(): Line2 {
   const line = new Line2(geometry, material);
   line.visible = false;
   line.frustumCulled = false;
-  line.renderOrder = 2;
+  // Transparent pass: above the midfield logo (renderOrder 4), under play art (6).
+  // The logo does not write depth, so a later draw is what keeps the path visible.
+  line.renderOrder = 5;
   return line;
 }
 

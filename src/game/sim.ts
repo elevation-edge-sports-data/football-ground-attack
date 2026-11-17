@@ -1,6 +1,6 @@
 import {
   FIELD,
-  PLAY_MAX_X,
+  playMaxX,
   PLAY_MAX_YARD,
   PLAY_MIN_X,
   PLAY_MIN_YARD,
@@ -240,7 +240,7 @@ function placeBall(sim: Sim, carrier: Player) {
   // Field right of forward (facingX, facingYard). North → +X. Matches forward × up in world.
   const rightX = carrier.facingYard;
   const rightYard = -carrier.facingX;
-  sim.ballX = clamp(carrier.x + carrier.facingX * BALL_AHEAD + rightX * BALL_RIGHT, PLAY_MIN_X, PLAY_MAX_X);
+  sim.ballX = clamp(carrier.x + carrier.facingX * BALL_AHEAD + rightX * BALL_RIGHT, PLAY_MIN_X, playMaxX());
   sim.ballYard = clamp(
     carrier.yard + carrier.facingYard * BALL_AHEAD + rightYard * BALL_RIGHT,
     PLAY_MIN_YARD,
@@ -271,9 +271,9 @@ function separate(sim: Sim) {
         const push = (minDist - dist) * 0.5;
         const nx = dx / dist;
         const ny = dy / dist;
-        a.x = clamp(a.x - nx * push, PLAY_MIN_X, PLAY_MAX_X);
+        a.x = clamp(a.x - nx * push, PLAY_MIN_X, playMaxX());
         a.yard = clamp(a.yard - ny * push, PLAY_MIN_YARD, PLAY_MAX_YARD);
-        b.x = clamp(b.x + nx * push, PLAY_MIN_X, PLAY_MAX_X);
+        b.x = clamp(b.x + nx * push, PLAY_MIN_X, playMaxX());
         b.yard = clamp(b.yard + ny * push, PLAY_MIN_YARD, PLAY_MAX_YARD);
       }
     }
@@ -861,7 +861,7 @@ function stiffPush(sim: Sim, carrier: Player, side: -1 | 1, dt: number) {
     dist = 1;
   }
   const push = STIFF_PUSH * dt;
-  best.x = clamp(best.x + (dx / dist) * push, PLAY_MIN_X, PLAY_MAX_X);
+  best.x = clamp(best.x + (dx / dist) * push, PLAY_MIN_X, playMaxX());
   best.yard = clamp(best.yard + (dy / dist) * push, PLAY_MIN_YARD, PLAY_MAX_YARD);
 }
 
@@ -1098,7 +1098,7 @@ export function step(sim: Sim, input: Input, dt: number) {
     if (moveX !== 0 || moveY !== 0) {
       sim.velX = moveX;
       sim.velY = moveY;
-      carrier.x = clamp(carrier.x + moveX, PLAY_MIN_X, PLAY_MAX_X);
+      carrier.x = clamp(carrier.x + moveX, PLAY_MIN_X, playMaxX());
       carrier.yard = clamp(carrier.yard + moveY, PLAY_MIN_YARD, PLAY_MAX_YARD);
     }
     carrier.hop = motion.hop;

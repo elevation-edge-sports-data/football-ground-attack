@@ -16,7 +16,7 @@
  * on the sim before the first call so the controlled halfback is the carrier
  * `step` moves.
  */
-import { PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, clamp } from "../../field/spec";
+import { playMaxX, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, clamp } from "../../field/spec";
 import { step, type Input, type Player, type Sim } from "../sim";
 import type { PlayInput } from "./types";
 import type { AssignedPlay, AssignedPlayer, ReplayFrame } from "./assign";
@@ -344,7 +344,7 @@ function seek(player: Player, x: number, yard: number, dt: number, scale = 1) {
   if (dist < 1e-4 || dt <= 0) return;
   const stepLen = Math.min(roleSpeed(player.role) * scale * dt, dist);
   if (stepLen <= 0) return;
-  player.x = clamp(player.x + (dx / dist) * stepLen, PLAY_MIN_X, PLAY_MAX_X);
+  player.x = clamp(player.x + (dx / dist) * stepLen, PLAY_MIN_X, playMaxX());
   player.yard = clamp(player.yard + (dy / dist) * stepLen, PLAY_MIN_YARD, PLAY_MAX_YARD);
   player.facingX = dx / dist;
   player.facingYard = dy / dist;

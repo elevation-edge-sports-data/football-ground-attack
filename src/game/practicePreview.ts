@@ -1,6 +1,7 @@
 /**
- * Playbook cards. The window fits every player and assignment for that side,
- * with north toward the top of the card.
+ * Playbook cards. The window fits every player and assignment for that side.
+ * Field right stays on the right. The attack goal is toward the top, so a south
+ * attack flips only the vertical axis.
  * Offense shows block marks and the carrier path. Defense shows zones and fits.
  */
 import type { ArtHead, ArtStroke, ArtZone, PlayDiagram } from "./snapArt";
@@ -60,7 +61,15 @@ function contentBox(diagram: PlayDiagram, side: "off" | "def"): Box {
     }
   }
   if (!any) {
-    return { minX: diagram.snapX - 12, maxX: diagram.snapX + 12, minY: diagram.los - 8, maxY: diagram.los + 14 };
+    const back = 8;
+    const depth = 14;
+    const north = diagram.attackNorth !== false;
+    return {
+      minX: diagram.snapX - 12,
+      maxX: diagram.snapX + 12,
+      minY: diagram.los + (north ? -back : -depth),
+      maxY: diagram.los + (north ? depth : back),
+    };
   }
   const cx = (box.minX + box.maxX) / 2;
   const cy = (box.minY + box.maxY) / 2;
@@ -76,11 +85,14 @@ function project(diagram: PlayDiagram, side: "off" | "def", width: number, heigh
   const scale = Math.min((width - PAD * 2) / yardW, (height - PAD * 2) / yardH);
   const originX = (width - yardW * scale) / 2;
   const originY = (height - yardH * scale) / 2;
+  // +X stays to the right either way. Only the yard axis flips on a south attack,
+  // so the attack goal stays at the top without mirroring the sidelines.
+  const north = diagram.attackNorth !== false;
   return {
     x: (fieldX: number) => originX + (fieldX - box.minX) * scale,
-    y: (yard: number) => originY + (box.maxY - yard) * scale,
+    y: (yard: number) => (north ? originY + (box.maxY - yard) * scale : originY + (yard - box.minY) * scale),
     scale,
-    losY: originY + (box.maxY - diagram.los) * scale,
+    losY: north ? originY + (box.maxY - diagram.los) * scale : originY + (diagram.los - box.minY) * scale,
   };
 }
 

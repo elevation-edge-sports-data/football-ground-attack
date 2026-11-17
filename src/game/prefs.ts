@@ -14,8 +14,20 @@ export type StoredPrefs = {
     surface?: string;
     ezArt?: string;
     ezTone?: string;
+    /** Older saves. False means the mark was off. */
     logo?: boolean;
+    /** v4.38 center-ice choice. EE, off, or a picked image. */
+    logoMode?: string;
+    /** v4.38 zoom. 1 fits the mark. */
+    logoZoom?: number;
+    /** Data URL from the custom logo file picker. */
+    logoCustom?: string;
     logoNorth?: boolean;
+    /** Yards, 10–100. */
+    width?: number;
+    /** v10 `ezTextSelect`: Elevation Edge, off, or custom. */
+    ezText?: string;
+    ezCustom?: string;
   };
   tuning?: {
     you?: number;

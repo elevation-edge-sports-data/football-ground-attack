@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useSyncExternalStore } from "react";
 import { DoubleSide, MeshBasicMaterial, Raycaster, Vector2, Vector3, type Camera, type Group, type Mesh, type Object3D } from "three";
-import { FIELD, NORTH_BACK, PLAY_MAX_X, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, SOUTH_BACK } from "../field/spec";
+import { FIELD, NORTH_BACK, playMaxX, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD, readFieldWidth, SOUTH_BACK } from "../field/spec";
 import { readAttackNorth } from "./sim/attack";
 import { readCameraCenter, setCameraCenter } from "./cameraCenter";
 import { readCamMode } from "./cameraMode";
@@ -50,7 +50,7 @@ import { bindReplayToggle, clearReplayHeldRate, publishReplayTransport, readRepl
 import { replayFocus, replayFocusJump } from "./replayCamera";
 import { sampleReplay, stepAssignments } from "./sim/advance";
 import { stanceOf, stanceRevision, subscribeStances } from "./sim/stance";
-import { randomizeFieldForNewGame } from "./fieldLook";
+import { onFieldWidth, randomizeFieldForNewGame, subscribeFieldLook } from "./fieldLook";
 import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onReset, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPendingFirstDownYard, readPendingLos, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
 import { beginDefenseHuddle, beginDefenseLive, readUserDefenderId, readUserDefPose, tickDefenseHuddle, type DefenseStick } from "./sim/defense";
 import { runnerBounds } from "./sideline";
@@ -107,7 +107,7 @@ type FieldSpot = { x: number; yard: number };
 
 function clampFocus(x: number, yard: number): FieldSpot {
   return {
-    x: Math.min(PLAY_MAX_X, Math.max(PLAY_MIN_X, x)),
+    x: Math.min(playMaxX(), Math.max(PLAY_MIN_X, x)),
     yard: Math.min(PLAY_MAX_YARD, Math.max(PLAY_MIN_YARD, yard)),
   };
 }
@@ -463,6 +463,7 @@ export function SimView() {
     ballYard: number;
   } | null>(null);
   const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
+  const fieldWidth = useSyncExternalStore(subscribeFieldLook, readFieldWidth);
   const stanceRev = useSyncExternalStore(subscribeStances, stanceRevision);
   const [rosterTick, setRosterTick] = useState(0);
   const mountPlay = (next: { sim: Sim; assigned: AssignedPlay }) => {
@@ -562,6 +563,14 @@ export function SimView() {
     });
   });
   useLayoutEffect(() => onModeStage(() => applyStage.current()), []);
+  useEffect(() => {
+    return onFieldWidth(() => {
+      const maxX = playMaxX();
+      const state = sim.current;
+      state.ballX = Math.min(maxX, Math.max(PLAY_MIN_X, state.ballX));
+      for (const player of state.players) player.x = Math.min(maxX, Math.max(PLAY_MIN_X, player.x));
+    });
+  }, []);
   useLayoutEffect(() => onNextPlay(() => goNext.current()), []);
   useLayoutEffect(() => onRestart(() => restartGame.current()), []);
   useLayoutEffect(() => onReset(() => resetSession.current()), []);
@@ -1605,11 +1614,11 @@ export function SimView() {
       <PlayArt modelRef={artState} age={artAge} rosterTick={rosterTick} />
       <group key={rosterTick}>
         <mesh ref={losLine} position={[losX, losY, losZ]} renderOrder={5}>
-          <boxGeometry args={[FIELD.width, 0.035, 0.16]} />
+          <boxGeometry args={[fieldWidth, 0.035, 0.16]} />
           <meshStandardMaterial color="#3b82f6" polygonOffset polygonOffsetFactor={-8} polygonOffsetUnits={-8} />
         </mesh>
         <mesh ref={firstDownLine} visible={firstYard != null} position={[fdX, fdY, fdZ]} renderOrder={5}>
-          <boxGeometry args={[FIELD.width, 0.035, 0.16]} />
+          <boxGeometry args={[fieldWidth, 0.035, 0.16]} />
           <meshStandardMaterial color="#fbbf24" polygonOffset polygonOffsetFactor={-8} polygonOffsetUnits={-8} />
         </mesh>
         {roster.map((player) => {

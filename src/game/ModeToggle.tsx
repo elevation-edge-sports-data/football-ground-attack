@@ -62,7 +62,7 @@ export function ModeToggle({ mode, embedded = false }: { mode: SessionMode; embe
   );
 }
 
-/** Home | Away. Drill and Practice only. Home is the default. */
+/** Home | Away. Home is the default. Away mirrors the attack in every mode. */
 export function HomeAwayButton({ home }: { home: boolean }) {
   const accent = useSyncExternalStore(subscribeUniforms, homePrimary);
   return (

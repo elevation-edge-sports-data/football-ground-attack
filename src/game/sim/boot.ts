@@ -21,6 +21,7 @@ import {
   homeTwentyFive,
   orientLineup,
   readAttackNorth,
+  readBaseAttackNorth,
   readYouHome,
   safetySpotYard,
   setAttackNorth,
@@ -145,7 +146,7 @@ let openingProfile: Scoreboard["profile"] = "wings";
   // A fresh GAME ignores the saved side. Drill and practice keep it.
   if (sessionMode === "game") openingSide = rollPlaySide();
 }
-setYouHomeApplies(sessionMode !== "game");
+setYouHomeApplies(true);
 let practicePlay = 0;
 let practiceScheme = 0;
 let practiceSpotX = FIELD.width * 0.5;
@@ -325,14 +326,15 @@ function prepareGameSideStage() {
 }
 
 /**
- * Drill and Practice. Swaps whether YOU is home or away.
+ * Swaps whether YOU is home or away.
  * Kits, banner labels, and the controlled side stay put.
- * A snapped drill play runs to the whistle. Home/Away waits until then.
+ * The lineup, play art, and camera turn around with the attack.
+ * A snapped drill or game play runs to the whistle. Home/Away waits until then.
  */
 export function toggleYouHome() {
-  if (sessionMode === "game") return;
-  if (sessionMode === "drill" && !board.awaitSnap && !board.over) return;
+  if ((sessionMode === "drill" || sessionMode === "game") && !board.awaitSnap && !board.over) return;
   setYouHome(!readYouHome());
+  if (sessionMode === "game") prepareGameSideStage();
   publish();
   queueStage();
 }
@@ -537,7 +539,7 @@ export function setSessionMode(next: SessionMode) {
   } else if (sessionMode !== "practice") {
     resetMatchHud();
     sessionMode = mode;
-    setYouHomeApplies(mode !== "game");
+    setYouHomeApplies(true);
     if (mode === "game") gameQ1Side = board.side === "def" ? "def" : "off";
     writePrefs({ mode: sessionMode });
     queueStage();
@@ -545,7 +547,7 @@ export function setSessionMode(next: SessionMode) {
   }
   clearSittingStats(true);
   sessionMode = mode;
-  setYouHomeApplies(mode !== "game");
+  setYouHomeApplies(true);
   writePrefs({ mode: sessionMode });
   queueStage();
 }
@@ -591,6 +593,23 @@ export function restageArmedSnap() {
     board = { ...board, paused: true };
     publish();
   }
+}
+
+/**
+ * v10 width change clamps the ball onto the hashes and restages a waiting snap.
+ * A live play or a whistle stays put. The next snap uses the clamped spot.
+ */
+export function relayoutFieldWidth() {
+  const left = hashLeft();
+  const right = hashRight();
+  const snap = (x: number) => clamp(x, left, right);
+  practiceSpotX = snap(practiceSpotX);
+  practiceAimX = snap(practiceAimX);
+  lastSnap = { ...lastSnap, snapX: snap(lastSnap.snapX) };
+  stageSpot = { ...stageSpot, snapX: snap(stageSpot.snapX) };
+  if (pendingSpot) pendingSpot = { ...pendingSpot, ballX: snap(pendingSpot.ballX) };
+  restageArmedSnap();
+  syncPractice();
 }
 
 /**
@@ -1197,7 +1216,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
     return pendingSpot;
   }
   if (isSafety(carrier, safety) && carrier) {
-    const scoredOn: "home" | "away" = readAttackNorth() ? "home" : "away";
+    const scoredOn: "home" | "away" = readBaseAttackNorth() ? "home" : "away";
     const nextLos = safetySpotYard();
     const gain = downfieldDelta(nextLos, los);
     const stats = tallySnap(gain, yard, null, false);
@@ -1267,7 +1286,7 @@ export function settlePlay(sim: Sim, ballSpot = false, tip?: BallPoint, safety =
       if (sessionMode === "game") {
         // The other team takes over at this dead-ball spot. Applied after the quarter hooks.
         gameTurnover = {
-          team: readAttackNorth() ? "away" : "home",
+          team: readBaseAttackNorth() ? "away" : "home",
           los: nextLos,
           ballX: spotBallX,
           exact: ballSpot,
@@ -1519,9 +1538,9 @@ export function bootCamera(): { x: number; yard: number } {
   if (previewRequested()) {
     const preview = createSim();
     const lead = preview.players.find((player) => player.controlled);
-    return { x: lead?.x ?? 37.5, yard: lead?.yard ?? 25 };
+    return { x: lead?.x ?? FIELD.width * 0.5, yard: lead?.yard ?? 25 };
   }
   const { sim } = bootFullPlay();
   const lead = sim.players.find((player) => player.controlled);
-  return { x: lead?.x ?? 37.5, yard: lead?.yard ?? 50 };
+  return { x: lead?.x ?? FIELD.width * 0.5, yard: lead?.yard ?? 50 };
 }
