@@ -15,6 +15,7 @@ import { PracticeBooks } from "./game/PracticeBooks";
 import { TeamScore, UniformBanner } from "./game/UniformBanner";
 import { BottomMenus } from "./game/BottomMenus";
 import { CornerIcons } from "./game/CornerIcons";
+import { VersionArchive } from "./game/VersionArchive";
 import { ReplayScrubBar } from "./game/ReplayScrubBar";
 import { ReplayTransport } from "./game/ReplayTransport";
 import { PauseTapeControls, ReplayActionPanel, TapeBar } from "./game/TapeBar";
@@ -136,6 +137,7 @@ function App() {
         <CameraRig />
       </Canvas>
       <UniformBanner />
+      <VersionArchive />
       {!previewRequested() ? <PersonnelHud /> : null}
       {!previewRequested() ? <PracticeBooks /> : null}
       {!previewRequested() ? (

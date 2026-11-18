@@ -23,3 +23,6 @@ dev/reference/
 .vercel/
 .tanstack/
 *.log
+
+# Private team logos (local only)
+private-logos/

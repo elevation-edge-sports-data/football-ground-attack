@@ -13,10 +13,11 @@ import {
 } from "./sim/personnel";
 import { readTapeOn, subscribeTape } from "./tapeReplay";
 import type { PersonnelCounts } from "./sim/types";
+import { VERSION_ARCHIVE_CLEARANCE } from "./VersionArchive";
 
 const stripStyle: CSSProperties = {
   position: "absolute",
-  top: 12,
+  top: 12 + VERSION_ARCHIVE_CLEARANCE,
   right: 12,
   zIndex: 4,
   display: "flex",

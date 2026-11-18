@@ -4,17 +4,18 @@ import type { PlayDiagram } from "./snapArt";
 import { DEF_SCHEMES, OFF_PLAYS } from "./sim/plays";
 import { beginPracticeRespot, confirmPracticeRespot, readArmedCallIndex, readBoard, readPractice, setGameUserCall, setPracticePlay, setPracticeScheme, subscribeBoard, subscribePractice } from "./sim/boot";
 import { kitById, kitIdForSquad, getUniformSelection, subscribeUniforms } from "./uniforms";
+import { VERSION_ARCHIVE_CLEARANCE } from "./VersionArchive";
 
 const wrap: CSSProperties = {
   position: "absolute",
-  top: 168,
+  top: 168 + VERSION_ARCHIVE_CLEARANCE,
   right: 12,
   zIndex: 4,
   display: "flex",
   flexDirection: "column",
   alignItems: "flex-end",
   gap: 8,
-  maxHeight: "calc(100% - 180px)",
+  maxHeight: `calc(100% - ${180 + VERSION_ARCHIVE_CLEARANCE}px)`,
   overflow: "auto",
   pointerEvents: "auto",
   userSelect: "none",

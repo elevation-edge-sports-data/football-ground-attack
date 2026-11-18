@@ -2,11 +2,11 @@
 /**
  * Pack the 3D scene and pose editor for GitHub Pages.
  *
- * docs/r3f.html is the field. docs/pose-editor.html is the same bundle with
- * the editor forced on. docs/formation-library.html is that bundle with the
- * formation library forced on. docs/replay-viewer.html opens the replay viewer.
- * Does not write docs/index.html and does not touch
- * the canvas game (index.html, game.js, field.js, styles.css) or dist/.
+ * Root index.html is the live v11 page: one classic script, so it plays from
+ * file:// and from GitHub Pages. docs/r3f.html is that same scene.
+ * docs/pose-editor.html forces the editor on. docs/formation-library.html
+ * forces the formation library on. docs/replay-viewer.html opens the replay viewer.
+ * Does not write docs/index.html and does not touch dist/ or archive/.
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -37,14 +37,17 @@ function escapeScript(js) {
   return js.replace(/<\/script/gi, "<\\/script");
 }
 
-function page(title, js, rootAttrs = "") {
+function page(title, js, rootAttrs = "", head = {}) {
   const attrs = rootAttrs ? ` ${rootAttrs}` : "";
+  const description = head.description ? `\n  <meta name="description" content="${head.description}" />` : "";
+  const theme = head.theme ? `\n  <meta name="theme-color" content="${head.theme}" />` : "";
+  const favicon = head.favicon ? `\n  <link rel="icon" href="${head.favicon}" type="image/svg+xml" />` : "";
   return `<!DOCTYPE html>
 <html lang="en"${attrs}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${title}</title>${description}${theme}${favicon}
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700&display=swap" rel="stylesheet" />
@@ -88,17 +91,25 @@ if (/\bimport\.meta\b/.test(js)) {
 }
 
 mkdirSync(docs, { recursive: true });
-const scene = page("Football Ground Attack", js);
+const sceneHead = {
+  description: "v11 running-back lab. Play as the runner or the defense.",
+  theme: "#1c3144",
+};
+const sceneTitle = "Football Ground Attack · v11";
+const scene = page(sceneTitle, js, "", { ...sceneHead, favicon: "favicon.svg" });
+const sceneDocs = page(sceneTitle, js, "", { ...sceneHead, favicon: "../favicon.svg" });
 const editor = page("Pose Editor", js, 'data-pose-editor="1"');
 const library = page("Formation Library", js, 'data-formation-library="1"');
 const replay = page("Replay Viewer", js, 'data-replay-viewer="1"');
-writeFileSync(join(docs, "r3f.html"), scene);
+writeFileSync(join(root, "index.html"), scene);
+writeFileSync(join(docs, "r3f.html"), sceneDocs);
 writeFileSync(join(docs, "pose-editor.html"), editor);
 writeFileSync(join(docs, "formation-library.html"), library);
 writeFileSync(join(docs, "replay-viewer.html"), replay);
 writeFileSync(join(docs, ".nojekyll"), "");
 
-console.log(`wrote docs/r3f.html (${Buffer.byteLength(scene)} bytes)`);
+console.log(`wrote index.html (${Buffer.byteLength(scene)} bytes)`);
+console.log(`wrote docs/r3f.html (${Buffer.byteLength(sceneDocs)} bytes)`);
 console.log(`wrote docs/pose-editor.html (${Buffer.byteLength(editor)} bytes)`);
 console.log(`wrote docs/formation-library.html (${Buffer.byteLength(library)} bytes)`);
 console.log(`wrote docs/replay-viewer.html (${Buffer.byteLength(replay)} bytes)`);

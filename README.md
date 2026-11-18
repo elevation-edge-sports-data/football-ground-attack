@@ -1,8 +1,8 @@
 # Football Ground Attack Lab
 
-Customizable running-back lab on a single HTML5 canvas. **Version 10.** Play as offense (default) or defense.
+**Version 11** is the live page (3D). Play as offense (default) or defense. Canvas v10 is archived at `archive/v10/`.
 
-**[Play](https://elevation-edge-sports-data.github.io/football-ground-attack-lab/)** · [GitHub](https://github.com/elevation-edge-sports-data/football-ground-attack-lab)
+**[Play](https://elevation-edge-sports-data.github.io/football-ground-attack/)** · [GitHub](https://github.com/elevation-edge-sports-data/football-ground-attack)
 
 ![v10](screenshot.png)
 
@@ -11,6 +11,12 @@ Earlier versions (v0, v2, v3):
 ![v0, v2, and v3](screenshot-combo.png)
 
 Not affiliated with, endorsed by, or licensed by any league or team.
+
+## v11
+
+- Live page is the 3D field. `npm run build` packs it into `index.html`.
+- Canvas v10 is `archive/v10/`. The archive list on the live page runs v0–v10, with v11 current.
+- GitHub: https://github.com/elevation-edge-sports-data/football-ground-attack
 
 ## v10.4
 
@@ -208,9 +214,9 @@ All profiles are **T-9 compatible** (DirectInput v1 and standard-mapping v2).
 
 ## Tech
 
-`index.html` + `game.js` + `styles.css` + `ee-logo.png`. Canvas and JavaScript. No dependencies. Works offline.
+The live page is the v11 3D build packed into `index.html` (`npm run build`). That file plays offline. Canvas v10 is `archive/v10/` (`index.html`, `game.js`, `field.js`, `styles.css`, `ee-logo.png`).
 
-`screenshot.png` is the v10 capture. Earlier versions live in `archive/` (v0–v9, including v6-0 and v6-1). Live v9 is `archive/v9/`.
+`screenshot.png` is the v10 capture. Earlier versions live in `archive/` (v0–v10, including v6-0 and v6-1). Live v10 is `archive/v10/`.
 
 Built by [Zach Sajevic](https://github.com/elevation-edge-sports-data)  
 Elevation Edge Sports Data

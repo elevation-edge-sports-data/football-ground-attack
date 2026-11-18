@@ -13,6 +13,7 @@ import { FIGURE_ALIGN } from "./PlayerFigure";
 import { poseBallSide } from "./carrierPose";
 import { RespotMarker } from "./RespotMarker";
 import { basicMove, isMoveCode, PAUSE_KEY, radialDeadzone, readBasicPad, readBlockerStick, readClassicStiff, readPadButton, readRawDefense, readReplayPad, readRightStick, readRightStickClick } from "./input";
+import { versionArchiveMenuOpen } from "./VersionArchive";
 import { poseCarriesBall } from "./PoseEditor";
 import {
   aimTapeSelection,
@@ -607,6 +608,8 @@ export function SimView() {
 
   useLayoutEffect(() => {
     const down = (event: KeyboardEvent) => {
+      // The archive list uses Escape to close. Leave pause, replay, and tape alone until it is shut.
+      if (event.code === "Escape" && versionArchiveMenuOpen()) return;
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
       if (readTapeLocked() && (event.ctrlKey || event.metaKey) && event.code === "KeyZ" && !event.repeat) {
