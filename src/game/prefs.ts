@@ -16,13 +16,17 @@ export type StoredPrefs = {
     ezTone?: string;
     /** Older saves. False means the mark was off. */
     logo?: boolean;
-    /** v4.38 center-ice choice. EE, off, or a picked image. */
+    /** Midfield logo: `ee` (DEFAULT), custom, folder, or off. */
     logoMode?: string;
     /** v4.38 zoom. 1 fits the mark. */
     logoZoom?: number;
     /** Data URL from the custom logo file picker. */
     logoCustom?: string;
     logoNorth?: boolean;
+    /** Helmet brow logo: `home`, `away`, `folder`, or `off`. */
+    helmetLogoMode?: string;
+    /** Helmet side-logo zoom, 1.00–2.50. */
+    helmetLogoZoom?: number;
     /** Yards, 10–100. */
     width?: number;
     /** v10 `ezTextSelect`: Elevation Edge, off, or custom. */

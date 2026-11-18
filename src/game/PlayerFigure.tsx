@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import {
   Box3,
@@ -14,13 +14,25 @@ import {
   type Object3D,
   type Texture,
 } from "three";
+import { readFieldLook, subscribeFieldLook, type HelmetLogoMode } from "./fieldLook";
+import {
+  helmetFolderFiles,
+  helmetLogoRule,
+  helmetSideLogoUrl,
+  readHelmetLogoRev,
+  subscribeHelmetLogos,
+  type HelmetLogoRule,
+} from "./logoLibrary";
 import { applyPoseJoints, resetPoseJoints } from "./poseOverrides";
 import { POSE_JOINTS, REST_POSITION, type PoseJointId } from "./pose";
+import { subscribeYouHome, youKitIsHome } from "./sim/attack";
 import {
   forearmColor,
+  getUniformSelection,
   gloveColor,
   pantStripeColor,
   sleeveStripeColor,
+  subscribeUniforms,
   type Uniform,
 } from "./uniforms";
 
@@ -185,7 +197,7 @@ export function PlayerFigure({
               <meshStandardMaterial color={kit.jersey} roughness={0.62} />
             </mesh>
             <Joint id="head" register={register}>
-              <HelmetShell count={kit.helmStripes} helmet={kit.helmet} stripe={kit.helmStripeCol} edge={kit.helmStripeEdge} />
+              <HelmetShell kitId={kit.id} count={kit.helmStripes} helmet={kit.helmet} stripe={kit.helmStripeCol} edge={kit.helmStripeEdge} />
               <mesh position={[0, 0.11375, -0.15]} rotation={[-Math.PI / 2, 0, 0]}>
                 <torusGeometry args={[0.11, 0.009, 6, 12, Math.PI]} />
                 <meshStandardMaterial color={kit.facemask} roughness={0.35} />
@@ -580,19 +592,224 @@ function helmetMaps(count: number, helmet: string, stripe: string, edge?: string
   return blank;
 }
 
+/** Helmet shell box. Local −Z is the front (helmetMaps writes that stripe on face index 5). */
+const HELMET_W = 0.244;
+const HELMET_H = 0.27;
+const HELMET_D = 0.3;
+const HELMET_Y = 0.143;
+/**
+ * Side decal. Zoom 1 uses HELMET_LOGO_BASE as the long side.
+ * Zoom 2.5 stays on the side face (0.30 deep, 0.27 tall).
+ * The mark sits 0.02 off the shell so it clears the depth buffer.
+ */
+const HELMET_LOGO_BASE = 0.1;
+const HELMET_LOGO_MAX_W = 0.26;
+const HELMET_LOGO_MAX_H = 0.25;
+const HELMET_LOGO_GAP = 0.02;
+const HELMET_SIDE_X = HELMET_W / 2 + HELMET_LOGO_GAP;
+
+type LogoPaint = { map: CanvasTexture; aspect: number };
+
+type HelmetFaces = { left: string | null; right: string | null; flipRight: boolean };
+
+/** Place the files a kit consumed. The token is the only decision. */
+function helmetFaces(rule: HelmetLogoRule | null, files: readonly (string | null)[]): HelmetFaces {
+  const first = files[0] ?? null;
+  const second = files[1] ?? null;
+  if (rule === "none") return { left: null, right: null, flipRight: false };
+  if (rule === "mirror") return { left: first, right: first, flipRight: true };
+  if (rule === "left") return { left: first, right: null, flipRight: false };
+  if (rule === "right") return { left: null, right: first, flipRight: false };
+  if (rule === "dual") return { left: first, right: second, flipRight: false };
+  return { left: first, right: first, flipRight: false };
+}
+
+function customLogo(mode: HelmetLogoMode, kitId: number, homeKitId: number, awayKitId: number): string | null {
+  if (mode === "home") return kitId === homeKitId ? helmetSideLogoUrl("home") : null;
+  if (mode === "away") return kitId === awayKitId ? helmetSideLogoUrl("away") : null;
+  return null;
+}
+
+function helmetLogoSize(aspect: number, zoom: number): { w: number; h: number } {
+  const safe = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const long = HELMET_LOGO_BASE * zoom;
+  let w = safe >= 1 ? long : long * safe;
+  let h = safe >= 1 ? long / safe : long;
+  const fit = Math.min(1, HELMET_LOGO_MAX_W / Math.max(w, 1e-4), HELMET_LOGO_MAX_H / Math.max(h, 1e-4));
+  w *= fit;
+  h *= fit;
+  return { w, h };
+}
+
+/** Same image load the midfield mark uses. One texture, drawn on the shell. */
+function useLogoPaint(src: string | null): LogoPaint | null {
+  const [paint, setPaint] = useState<LogoPaint | null>(null);
+  useEffect(() => {
+    if (!src) return;
+    let live = true;
+    const img = new Image();
+    img.onload = () => {
+      if (!live) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || 1;
+      canvas.height = img.naturalHeight || 1;
+      canvas.getContext("2d")?.drawImage(img, 0, 0);
+      const map = new CanvasTexture(canvas);
+      map.colorSpace = SRGBColorSpace;
+      map.anisotropy = 8;
+      map.premultiplyAlpha = false;
+      map.needsUpdate = true;
+      setPaint({ map, aspect: canvas.width / Math.max(1, canvas.height) });
+    };
+    img.onerror = () => {
+      if (live) setPaint(null);
+    };
+    img.src = src;
+    return () => {
+      live = false;
+    };
+  }, [src]);
+  useEffect(() => () => paint?.map.dispose(), [paint]);
+  return paint;
+}
+
+function HelmetLogoPlane({
+  map,
+  w,
+  h,
+  position,
+  rotation,
+  mirror = false,
+}: {
+  map: CanvasTexture;
+  w: number;
+  h: number;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  /** Flip the plane's width axis. On the right face that mirrors the image left-right. */
+  mirror?: boolean;
+}) {
+  return (
+    <mesh
+      name="helmet-logo"
+      position={position}
+      rotation={rotation}
+      scale={mirror ? [-1, 1, 1] : [1, 1, 1]}
+      renderOrder={2}
+      frustumCulled={false}
+    >
+      <planeGeometry args={[w, h]} />
+      <meshBasicMaterial
+        map={map}
+        transparent
+        alphaTest={0.05}
+        toneMapped={false}
+        depthWrite={false}
+        side={DoubleSide}
+        polygonOffset
+        polygonOffsetFactor={-8}
+        polygonOffsetUnits={-8}
+      />
+    </mesh>
+  );
+}
+
+function HelmetSideLogo({
+  src,
+  zoom,
+  position,
+  rotation,
+  mirror = false,
+}: {
+  src: string;
+  zoom: number;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  mirror?: boolean;
+}) {
+  const paint = useLogoPaint(src);
+  if (!paint) return null;
+  const { w, h } = helmetLogoSize(paint.aspect, zoom);
+  return <HelmetLogoPlane map={paint.map} w={w} h={h} position={position} rotation={rotation} mirror={mirror} />;
+}
+
+function HelmetDecal({ left, right, zoom, flipRight }: { left: string | null; right: string | null; zoom: number; flipRight: boolean }) {
+  // PlaneGeometry faces +Z. A quarter-turn about Y lays it on a side face.
+  // Player right is +X. Ry(+π/2) points the normal there, and image-left lands
+  // on +Z, the viewer's left when that side is facing them.
+  // Player left is −X. Ry(−π/2) points the normal there, image-left on −Z.
+  // `flipRight` flips only the right face, so its image-left lands on the viewer's right.
+  return (
+    <group name="helmet-logo">
+      {right ? (
+        <HelmetSideLogo
+          src={right}
+          zoom={zoom}
+          position={[HELMET_SIDE_X, HELMET_Y, 0]}
+          rotation={[0, Math.PI / 2, 0]}
+          mirror={flipRight}
+        />
+      ) : null}
+      {left ? (
+        <HelmetSideLogo
+          src={left}
+          zoom={zoom}
+          position={[-HELMET_SIDE_X, HELMET_Y, 0]}
+          rotation={[0, -Math.PI / 2, 0]}
+        />
+      ) : null}
+    </group>
+  );
+}
+
+function HelmetMark({ kitId }: { kitId: number }) {
+  const look = useSyncExternalStore(subscribeFieldLook, readFieldLook);
+  const logoRev = useSyncExternalStore(subscribeHelmetLogos, readHelmetLogoRev);
+  const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
+  const youHome = useSyncExternalStore(subscribeYouHome, youKitIsHome);
+  const homeKitId = youHome ? kits.offId : kits.defId;
+  const awayKitId = youHome ? kits.defId : kits.offId;
+  if (look.helmetLogoMode === "off") return null;
+  const rule = logoRev >= 0 ? helmetLogoRule(kitId) : null;
+  const files =
+    look.helmetLogoMode === "folder"
+      ? logoRev >= 0
+        ? helmetFolderFiles(kitId)
+        : []
+      : [customLogo(look.helmetLogoMode, kitId, homeKitId, awayKitId)];
+  const faces = helmetFaces(rule, files);
+  if (!faces.left && !faces.right) return null;
+  return (
+    <HelmetDecal
+      key={`${faces.left ?? ""}|${faces.right ?? ""}|${faces.flipRight ? 1 : 0}`}
+      left={faces.left}
+      right={faces.right}
+      zoom={look.helmetLogoZoom}
+      flipRight={faces.flipRight}
+    />
+  );
+}
+
 function HelmetShell({
+  kitId,
   count,
   helmet,
   stripe,
   edge,
 }: {
+  kitId: number;
   count: number;
   helmet: string;
   stripe: string;
   edge?: string;
 }) {
   const maps = useMemo(() => helmetMaps(count, helmet, stripe, edge), [count, helmet, stripe, edge]);
-  return <StripedBox args={[0.244, 0.27, 0.3]} position={[0, 0.143, 0]} color={helmet} roughness={0.4} maps={maps} />;
+  return (
+    <>
+      <StripedBox args={[HELMET_W, HELMET_H, HELMET_D]} position={[0, HELMET_Y, 0]} color={helmet} roughness={0.4} maps={maps} />
+      <HelmetMark kitId={kitId} />
+    </>
+  );
 }
 
 const DIGIT_URLS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map(

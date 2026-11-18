@@ -14,14 +14,24 @@ export type EzArtId = "mountains" | "diamonds" | "solid" | "off";
 export type EzTone = "primary" | "secondary";
 /** v10 `ezTextSelect`. `ee` paints ELEVATION EDGE. */
 export type EzTextMode = "ee" | "off" | "custom";
-/** v4.38 center-ice logo. `ee` is the Elevation Edge mark. `custom` is a picked image. */
-export type LogoMode = "ee" | "off" | "custom";
+/**
+ * Midfield logo. `ee` is the DEFAULT button: the Elevation Edge mark.
+ * `custom` is one picked image. `folder` uses the imported file for the current kit.
+ */
+export type LogoMode = "ee" | "off" | "custom" | "folder";
+/** Helmet brow logo. Home and away each keep their own uploaded image. */
+export type HelmetLogoMode = "home" | "away" | "folder" | "off";
 
 /** v4.38 zoom range, with the top cut to 2. 1 is the unscaled mark. */
 export const LOGO_ZOOM_MIN = 0.4;
 export const LOGO_ZOOM_MAX = 2;
 export const LOGO_ZOOM_STEP = 0.05;
 export const LOGO_ZOOM_DEFAULT = 1;
+/** Helmet decal only. Midfield stays on LOGO_ZOOM_MIN / LOGO_ZOOM_MAX. */
+export const HELMET_LOGO_ZOOM_MIN = 1;
+export const HELMET_LOGO_ZOOM_MAX = 2.5;
+export const HELMET_LOGO_ZOOM_STEP = LOGO_ZOOM_STEP;
+export const HELMET_LOGO_ZOOM_DEFAULT = 1;
 
 export const SURFACES: SurfaceId[] = ["grass", "fieldturf", "astroturf"];
 
@@ -38,6 +48,10 @@ export type FieldLook = {
   logoCustom: string | null;
   /** v10 `logoFlip`. True turns the mark so its top points north. */
   logoNorth: boolean;
+  /** Helmet brow logo. Off draws nothing. */
+  helmetLogoMode: HelmetLogoMode;
+  /** Helmet side decal. 1.00–2.50. 1 is the unscaled mark. */
+  helmetLogoZoom: number;
   /** Yards across. Hashes and uprights use the same gap as field.js. */
   width: number;
   ezText: EzTextMode;
@@ -71,13 +85,23 @@ function isEzText(value: unknown): value is EzTextMode {
 }
 
 function isLogoMode(value: unknown): value is LogoMode {
-  return value === "ee" || value === "off" || value === "custom";
+  return value === "ee" || value === "off" || value === "custom" || value === "folder";
+}
+
+function isHelmetLogoMode(value: unknown): value is HelmetLogoMode {
+  return value === "home" || value === "away" || value === "folder" || value === "off";
 }
 
 /** v4.38 `clampCenterIceLogoZoom`. */
 export function clampLogoZoom(n: number) {
   if (!Number.isFinite(n)) return LOGO_ZOOM_DEFAULT;
   const clamped = Math.min(LOGO_ZOOM_MAX, Math.max(LOGO_ZOOM_MIN, n));
+  return Math.round(clamped * 100) / 100;
+}
+
+export function clampHelmetLogoZoom(n: number) {
+  if (!Number.isFinite(n)) return HELMET_LOGO_ZOOM_DEFAULT;
+  const clamped = Math.min(HELMET_LOGO_ZOOM_MAX, Math.max(HELMET_LOGO_ZOOM_MIN, n));
   return Math.round(clamped * 100) / 100;
 }
 
@@ -110,6 +134,8 @@ function openingLook(): FieldLook {
     logoZoom: LOGO_ZOOM_DEFAULT,
     logoCustom: null,
     logoNorth: Math.random() < 0.5,
+    helmetLogoMode: "off",
+    helmetLogoZoom: HELMET_LOGO_ZOOM_DEFAULT,
     width: readFieldWidth(),
     ezText: "ee" as const,
     ezCustom: DEFAULT_EZ_CUSTOM,
@@ -124,6 +150,8 @@ function openingLook(): FieldLook {
     logoZoom: typeof saved.logoZoom === "number" ? clampLogoZoom(saved.logoZoom) : rolled.logoZoom,
     logoCustom: typeof saved.logoCustom === "string" && saved.logoCustom.startsWith("data:image/") ? saved.logoCustom : rolled.logoCustom,
     logoNorth: typeof saved.logoNorth === "boolean" ? saved.logoNorth : rolled.logoNorth,
+    helmetLogoMode: isHelmetLogoMode(saved.helmetLogoMode) ? saved.helmetLogoMode : rolled.helmetLogoMode,
+    helmetLogoZoom: typeof saved.helmetLogoZoom === "number" ? clampHelmetLogoZoom(saved.helmetLogoZoom) : rolled.helmetLogoZoom,
     width: readFieldWidth(),
     ezText: isEzText(saved.ezText) ? saved.ezText : rolled.ezText,
     ezCustom: typeof saved.ezCustom === "string" ? saved.ezCustom.slice(0, 64) : rolled.ezCustom,
@@ -150,6 +178,8 @@ function remember() {
       logoZoom: look.logoZoom,
       logoCustom: look.logoCustom ?? undefined,
       logoNorth: look.logoNorth,
+      helmetLogoMode: look.helmetLogoMode,
+      helmetLogoZoom: look.helmetLogoZoom,
       width: look.width,
       ezText: look.ezText,
       ezCustom: look.ezCustom,
@@ -194,6 +224,19 @@ export function setLogoZoom(n: number) {
   const logoZoom = clampLogoZoom(n);
   if (look.logoZoom === logoZoom) return;
   publish({ ...look, logoZoom });
+  remember();
+}
+
+export function setHelmetLogoMode(helmetLogoMode: HelmetLogoMode) {
+  if (look.helmetLogoMode === helmetLogoMode) return;
+  publish({ ...look, helmetLogoMode });
+  remember();
+}
+
+export function setHelmetLogoZoom(n: number) {
+  const helmetLogoZoom = clampHelmetLogoZoom(n);
+  if (look.helmetLogoZoom === helmetLogoZoom) return;
+  publish({ ...look, helmetLogoZoom });
   remember();
 }
 

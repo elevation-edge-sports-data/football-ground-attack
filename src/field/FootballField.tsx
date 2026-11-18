@@ -19,8 +19,10 @@ import {
   type EzArtId,
   type EzTextMode,
   type EzTone,
+  type LogoMode,
   type SurfaceId,
 } from "../game/fieldLook";
+import { folderLogoUrl, readLogoLibraryRev, subscribeLogoLibrary } from "../game/logoLibrary";
 import { subscribeYouHome, youKitIsHome } from "../game/sim/attack";
 import { kitById, subscribeUniforms, getUniformSelection, type Uniform } from "../game/uniforms";
 import {
@@ -631,6 +633,49 @@ function EzTextPlane({
   );
 }
 
+/**
+ * DEFAULT (`ee`) paints the Elevation Edge mark. Custom with a file paints that file.
+ * Folder paints the imported image for this kit, or nothing when that kit has no file.
+ * Off paints nothing. The key drops a folder texture as soon as the mode or file changes.
+ */
+function MidfieldMark({
+  mode,
+  custom,
+  logoRev,
+  kitId,
+  primary,
+  secondary,
+  north,
+  width,
+  zoom,
+}: {
+  mode: LogoMode;
+  custom: string | null;
+  logoRev: number;
+  kitId: number;
+  primary: string;
+  secondary: string;
+  north: boolean;
+  width: number;
+  zoom: number;
+}) {
+  const customSrc = mode === "custom" && custom ? custom : null;
+  const src = mode === "off" ? null : mode === "folder" ? (logoRev >= 0 ? folderLogoUrl(kitId) : null) : (customSrc ?? logoUrl);
+  if (!src) return null;
+  return (
+    <MidfieldLogo
+      key={mode === "folder" ? `folder:${src}` : "mark"}
+      primary={primary}
+      secondary={secondary}
+      north={north}
+      width={width}
+      zoom={zoom}
+      src={src}
+      recolor={mode !== "folder" && !customSrc}
+    />
+  );
+}
+
 function yardNumbers() {
   const marks: { yard: number; label: string; big: boolean; numY: number }[] = [];
   const mid = FIELD.length * 0.5;
@@ -646,6 +691,7 @@ export function FootballField() {
   const look = useSyncExternalStore(subscribeFieldLook, readFieldLook);
   const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
   useSyncExternalStore(subscribeYouHome, youKitIsHome);
+  const logoRev = useSyncExternalStore(subscribeLogoLibrary, readLogoLibraryRev);
   const home = kitById(youKitIsHome() ? kits.offId : kits.defId);
   const { primary, secondary } = endZonePalette(home, look.ezArt);
   const turf = useMemo(() => buildTurfGeometry(look.surface, look.width), [look.surface, look.width]);
@@ -684,17 +730,17 @@ export function FootballField() {
       <SurfaceGrain surface={look.surface} ezArt={look.ezArt} width={look.width} />
       <EndZones art={look.ezArt} tone={look.ezTone} kit={home} width={look.width} />
       <EndZoneLettering width={look.width} mode={look.ezText} custom={look.ezCustom} fontTick={fontTick} />
-      {look.logoMode !== "off" ? (
-        <MidfieldLogo
-          primary={primary}
-          secondary={secondary}
-          north={look.logoNorth}
-          width={look.width}
-          zoom={look.logoZoom}
-          src={look.logoMode === "custom" && look.logoCustom ? look.logoCustom : logoUrl}
-          recolor={!(look.logoMode === "custom" && look.logoCustom)}
-        />
-      ) : null}
+      <MidfieldMark
+        mode={look.logoMode}
+        custom={look.logoCustom}
+        logoRev={logoRev}
+        kitId={home.id}
+        primary={primary}
+        secondary={secondary}
+        north={look.logoNorth}
+        width={look.width}
+        zoom={look.logoZoom}
+      />
       <EndZonePylons width={look.width} />
       <GoalPosts width={look.width} />
       <FieldLines width={look.width} />

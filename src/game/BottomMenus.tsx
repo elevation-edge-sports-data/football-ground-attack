@@ -7,19 +7,39 @@ import {
   setEzText,
   setEzTone,
   setFieldWidth,
+  setHelmetLogoMode,
+  setHelmetLogoZoom,
   setLogoCustom,
   setLogoMode,
   setLogoZoom,
   setSurface,
   subscribeFieldLook,
+  HELMET_LOGO_ZOOM_MAX,
+  HELMET_LOGO_ZOOM_MIN,
+  HELMET_LOGO_ZOOM_STEP,
   LOGO_ZOOM_MAX,
   LOGO_ZOOM_MIN,
   LOGO_ZOOM_STEP,
   type EzArtId,
   type EzTextMode,
   type EzTone,
+  type HelmetLogoMode,
   type LogoMode,
 } from "./fieldLook";
+import {
+  folderLogoCount,
+  helmetFolderCount,
+  helmetLogoReady,
+  importHelmetLogoFolder,
+  importLogoFolder,
+  logoLibraryReady,
+  readHelmetLogoRev,
+  readLogoLibraryRev,
+  storeHelmetSideLogo,
+  subscribeHelmetLogos,
+  subscribeLogoLibrary,
+  type HelmetSide,
+} from "./logoLibrary";
 import { FIELD_WIDTH_MAX, FIELD_WIDTH_MIN, FIELD_WIDTH_STEP } from "../field/spec";
 import { HomeAwayButton, ModeToggle, PlaySideButton } from "./ModeToggle";
 import { CONTROL_PROFILES, askReplay, readBoard, readPaused, readReplayFootage, relayoutFieldWidth, setPaused, setProfile, subscribeBoard, subscribeReplayFootage, type ControlProfile } from "./sim/boot";
@@ -41,7 +61,7 @@ import {
 import { beginTape, readTapeOn, readTapeReady, stopTape, subscribeTape, subscribeTapeReady } from "./tapeReplay";
 
 type MenuId = "camera" | "field" | "controller" | "settings";
-type FieldPanel = "surface" | "ezart" | "width" | "eztext" | "logo";
+type FieldPanel = "surface" | "ezart" | "width" | "eztext" | "logo" | "helmet";
 
 const dock: CSSProperties = {
   position: "fixed",
@@ -240,7 +260,19 @@ export function BottomMenus() {
                     onMouseDown={holdFocus}
                     onClick={() => toggleField("logo")}
                   >
-                    Logo
+                    Midfield Logo
+                  </button>
+                </div>
+                <div style={{ position: "relative" }}>
+                  {fieldPanel === "helmet" ? <HelmetLogoRow mode={look.helmetLogoMode} zoom={look.helmetLogoZoom} /> : null}
+                  <button
+                    type="button"
+                    style={choiceStyle(fieldPanel === "helmet")}
+                    aria-expanded={fieldPanel === "helmet"}
+                    onMouseDown={holdFocus}
+                    onClick={() => toggleField("helmet")}
+                  >
+                    Helmet Logo
                   </button>
                 </div>
               </div>
@@ -565,23 +597,66 @@ const logoFileInput: CSSProperties = {
   pointerEvents: "none",
 };
 
+const logoStatusStyle: CSSProperties = {
+  fontFamily: '"Barlow Condensed", sans-serif',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#8b9688",
+  whiteSpace: "nowrap",
+};
+
 function LogoRow({ mode, zoom }: { mode: LogoMode; zoom: number }) {
   const file = useRef<HTMLInputElement>(null);
+  const folder = useRef<HTMLInputElement>(null);
+  // True only when this press began with Custom already selected.
+  // The mode change itself must not open the picker in the same click.
+  const customWasOn = useRef(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const logoRev = useSyncExternalStore(subscribeLogoLibrary, readLogoLibraryRev);
+  const count = logoRev >= 0 ? folderLogoCount() : 0;
+  const ready = logoLibraryReady();
+  const statusText =
+    status ?? (mode === "folder" && ready ? (count > 0 ? `${count} ${count === 1 ? "image" : "images"}` : "No images") : null);
   return (
-    <div role="group" aria-label="Midfield logo" style={popRow("end")}>
-      <PickButton label="EE" on={mode === "ee"} onPick={() => setLogoMode("ee")} />
-      <PickButton label="Off" on={mode === "off"} onPick={() => setLogoMode("off")} />
+    <div role="group" aria-label="Midfield Logo" style={popRow("end")}>
+      <PickButton label="Default" on={mode === "ee"} onPick={() => setLogoMode("ee")} />
       <button
         type="button"
         style={choiceStyle(mode === "custom")}
         aria-pressed={mode === "custom"}
+        onMouseDown={(event) => {
+          customWasOn.current = mode === "custom";
+          holdFocus(event);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          customWasOn.current = mode === "custom";
+        }}
         onClick={() => {
-          setLogoMode("custom");
+          if (!customWasOn.current) {
+            setLogoMode("custom");
+            return;
+          }
           file.current?.click();
         }}
       >
         Custom
       </button>
+      <button
+        type="button"
+        style={choiceStyle(mode === "folder")}
+        aria-pressed={mode === "folder"}
+        onMouseDown={holdFocus}
+        onClick={() => {
+          if (mode !== "folder") setLogoMode("folder");
+          if (mode === "folder" || (ready && count === 0)) folder.current?.click();
+        }}
+      >
+        Folder
+      </button>
+      <PickButton label="Off" on={mode === "off"} onPick={() => setLogoMode("off")} />
       {mode !== "off" ? (
         <label style={logoZoomRow}>
           <span>Zoom</span>
@@ -598,6 +673,7 @@ function LogoRow({ mode, zoom }: { mode: LogoMode; zoom: number }) {
           <b style={tuneValue}>{zoom.toFixed(2)}×</b>
         </label>
       ) : null}
+      {statusText ? <span style={logoStatusStyle}>{statusText}</span> : null}
       <input
         ref={file}
         type="file"
@@ -615,6 +691,153 @@ function LogoRow({ mode, zoom }: { mode: LogoMode; zoom: number }) {
             if (typeof url === "string") setLogoCustom(url);
           };
           reader.readAsDataURL(picked);
+        }}
+      />
+      <input
+        ref={(node) => {
+          folder.current = node;
+          if (node) {
+            node.webkitdirectory = true;
+            node.setAttribute("webkitdirectory", "");
+          }
+        }}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp"
+        aria-hidden="true"
+        tabIndex={-1}
+        style={logoFileInput}
+        onChange={(event) => {
+          const picked = event.target.files ? Array.from(event.target.files) : [];
+          event.target.value = "";
+          if (picked.length === 0) return;
+          setStatus("Reading images…");
+          void importLogoFolder(picked)
+            .then((result) => {
+              if (result.ok) setLogoMode("folder");
+              setStatus(result.message);
+            })
+            .catch(() => setStatus("Could not import those images."));
+        }}
+      />
+    </div>
+  );
+}
+
+function HelmetSideInput({
+  side,
+  inputRef,
+  onDone,
+}: {
+  side: HelmetSide;
+  inputRef: { current: HTMLInputElement | null };
+  onDone: (message: string | null) => void;
+}) {
+  return (
+    <input
+      ref={inputRef}
+      type="file"
+      accept="image/*"
+      aria-hidden="true"
+      tabIndex={-1}
+      style={logoFileInput}
+      onChange={(event) => {
+        const picked = event.target.files?.[0];
+        event.target.value = "";
+        if (!picked) return;
+        void storeHelmetSideLogo(side, picked)
+          .then((result) => onDone(result.ok ? null : result.message))
+          .catch(() => onDone("Could not store that image."));
+      }}
+    />
+  );
+}
+
+function HelmetLogoRow({ mode, zoom }: { mode: HelmetLogoMode; zoom: number }) {
+  const homeFile = useRef<HTMLInputElement>(null);
+  const awayFile = useRef<HTMLInputElement>(null);
+  const folder = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const logoRev = useSyncExternalStore(subscribeHelmetLogos, readHelmetLogoRev);
+  const count = logoRev >= 0 ? helmetFolderCount() : 0;
+  const ready = helmetLogoReady();
+  const statusText =
+    status ?? (mode === "folder" && ready ? (count > 0 ? `${count} ${count === 1 ? "image" : "images"}` : "No images") : null);
+  return (
+    <div role="group" aria-label="Helmet Logo" style={popRow("end")}>
+      <PickButton
+        label="Custom Home"
+        on={mode === "home"}
+        onPick={() => {
+          setHelmetLogoMode("home");
+          homeFile.current?.click();
+        }}
+      />
+      <PickButton
+        label="Custom Away"
+        on={mode === "away"}
+        onPick={() => {
+          setHelmetLogoMode("away");
+          awayFile.current?.click();
+        }}
+      />
+      <button
+        type="button"
+        style={choiceStyle(mode === "folder")}
+        aria-pressed={mode === "folder"}
+        onMouseDown={holdFocus}
+        onClick={() => {
+          if (mode !== "folder") setHelmetLogoMode("folder");
+          if (mode === "folder" || (ready && count === 0)) folder.current?.click();
+        }}
+      >
+        Folder
+      </button>
+      <PickButton label="Off" on={mode === "off"} onPick={() => setHelmetLogoMode("off")} />
+      {mode !== "off" ? (
+        <label style={logoZoomRow}>
+          <span>Zoom</span>
+          <input
+            type="range"
+            min={HELMET_LOGO_ZOOM_MIN}
+            max={HELMET_LOGO_ZOOM_MAX}
+            step={HELMET_LOGO_ZOOM_STEP}
+            value={zoom}
+            aria-label="Helmet logo zoom"
+            style={tuneInput}
+            onChange={(event) => setHelmetLogoZoom(Number(event.target.value))}
+          />
+          <b style={tuneValue}>{zoom.toFixed(2)}×</b>
+        </label>
+      ) : null}
+      {statusText ? <span style={logoStatusStyle}>{statusText}</span> : null}
+      <HelmetSideInput side="home" inputRef={homeFile} onDone={setStatus} />
+      <HelmetSideInput side="away" inputRef={awayFile} onDone={setStatus} />
+      <input
+        ref={(node) => {
+          folder.current = node;
+          if (node) {
+            node.webkitdirectory = true;
+            node.setAttribute("webkitdirectory", "");
+          }
+        }}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp,text/plain,.txt"
+        aria-hidden="true"
+        tabIndex={-1}
+        style={logoFileInput}
+        onChange={(event) => {
+          const picked = event.target.files ? Array.from(event.target.files) : [];
+          event.target.value = "";
+          if (picked.length === 0) return;
+          setStatus("Reading images…");
+          void importHelmetLogoFolder(picked)
+            .then((result) => {
+              if (result.ok) setHelmetLogoMode("folder");
+              setStatus(result.message);
+            })
+            .catch(() => setStatus("Could not import those images."));
         }}
       />
     </div>
