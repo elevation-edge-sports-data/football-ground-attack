@@ -5,10 +5,10 @@
  * `applyPresnapLook` is the canvas alignment: scheme-specific depth and
  * width, then a nudge so bodies are not stacked on the line. Offense faces
  * north. Defense faces the offense.
- * `spreadInteriorDefense` then spaces the interior (everyone who is not a
- * wide DB) across a span that grows with field width.
+ * `spreadInteriorDefense` then spaces non-wing defensive backs across a span
+ * that grows with how many of them there are. Tackles and linebackers stay put.
  */
-import { FIELD, clamp } from "../../field/spec";
+import { FIELD, clamp, hashHalf } from "../../field/spec";
 import type { AssignedPlay, AssignedPlayer } from "./assign";
 import { playSideSign } from "./plays";
 import type { DefenseAssignment } from "./types";
@@ -63,6 +63,74 @@ function plantDeep(player: AssignedPlayer, xFrac: number, yOff: number, rx: numb
   setLandmark(player, player.x, player.yard + 1.6);
 }
 
+/** Inset that matches the old 2.2 yards on a wide field and shrinks on a narrow one. */
+function tackleEdge(width: number) {
+  return Math.min(2.2, Math.max(0.35, width * 0.08));
+}
+
+/**
+ * Odd counts: the middle tackle is on the snap. Even counts: the two middle
+ * tackles sit opposite each other. Gaps stay equal. A wide field already
+ * does this. Unstack and the fixed sideline clamp do not.
+ */
+function tackleRowBroken(dts: readonly AssignedPlayer[], snap: number, width: number) {
+  if (dts.length === 0) return false;
+  const xs = dts.map((player) => player.x).sort((a, b) => a - b);
+  const n = xs.length;
+  const edge = tackleEdge(width);
+  if (xs.some((x) => x < edge || x > width - edge)) return true;
+  const mid = n % 2 === 1 ? xs[(n - 1) / 2]! : (xs[n / 2 - 1]! + xs[n / 2]!) / 2;
+  if (Math.abs(mid - snap) > 0.75) return true;
+  if (n === 1) return false;
+  let minGap = Infinity;
+  let maxGap = 0;
+  for (let i = 1; i < n; i++) {
+    const gap = xs[i]! - xs[i - 1]!;
+    if (gap < minGap) minGap = gap;
+    if (gap > maxGap) maxGap = gap;
+  }
+  return maxGap - minGap > 0.85;
+}
+
+/** Shrink offsets from the snap so a snap-centered row stays on the field. */
+function fitTacklesToField(dts: readonly AssignedPlayer[], snap: number, width: number) {
+  const edge = tackleEdge(width);
+  const lo = edge;
+  const hi = width - edge;
+  if (!(hi > lo)) return;
+  let scale = 1;
+  for (const player of dts) {
+    const off = player.x - snap;
+    if (off < -1e-6 && snap + off < lo) {
+      const next = (lo - snap) / off;
+      if (next < scale) scale = next;
+    } else if (off > 1e-6 && snap + off > hi) {
+      const next = (hi - snap) / off;
+      if (next < scale) scale = next;
+    }
+  }
+  if (!(scale > 0) || !(scale < 1)) return;
+  for (const player of dts) player.x = snap + (player.x - snap) * scale;
+}
+
+/**
+ * 1–2 DBs stand 8 yards off the ball. With 3–5, the outer pair is at 3 yards
+ * (inside the 2–4 band) and every DB between them is at 8. Six or more stay put.
+ */
+function applyDbCountDepths(players: readonly AssignedPlayer[], los: number) {
+  const dbs = players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
+  const count = dbs.length;
+  if (count < 1 || count > 5) return;
+  if (count <= 2) {
+    for (const player of dbs) player.yard = los + 8;
+    return;
+  }
+  dbs.forEach((player, index) => {
+    const outer = index === 0 || index === count - 1;
+    player.yard = los + (outer ? 3 : 8);
+  });
+}
+
 function unstack(list: AssignedPlayer[], minDist: number) {
   for (let pass = 0; pass < 10; pass++) {
     for (let i = 0; i < list.length; i++) {
@@ -89,13 +157,34 @@ function unstack(list: AssignedPlayer[], minDist: number) {
   }
 }
 
+function seatDb(player: AssignedPlayer, x: number) {
+  player.x = x;
+  const job = defenseOf(player);
+  if (!job) return;
+  job.x = x;
+  job.stationX = x;
+}
+
 /**
- * Space interior defenders across a span that grows with the field.
- * The outer DBs stay wings. Everyone else, including tackles and linebackers,
- * is the box. Landmark X follows the body. Yards do not change.
+ * Space non-wing defensive backs across a span that grows with their count.
+ * Four backs keep the outside spots of a three-back row and stand evenly between them.
+ * Wings, tackles, and linebackers keep the X they already have, so DT and LB
+ * counts cannot slide the backs, and DB or DT counts cannot slide the backers.
+ * Landmark X follows the body. Yards do not change.
  */
 export function spreadInteriorDefense(assigned: AssignedPlay, width = FIELD.width) {
   const dbs = assigned.players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
+  // Four backs keep the outside spots a three-back row already uses, and fill the span evenly.
+  if (dbs.length === 4) {
+    const span = Math.min(width * 0.52, 11.5 + 3 * 3.7);
+    const edge = width * 0.5 - span / 2;
+    const left = clamp(edge, 9.2, width - 9.2);
+    const right = clamp(edge + span, 9.2, width - 9.2);
+    dbs.forEach((player, index) => {
+      seatDb(player, left + (index / 3) * (right - left));
+    });
+    return;
+  }
   const wings = new Set<AssignedPlayer>();
   const wingCount = dbs.length >= 6 ? 4 : dbs.length >= 4 ? 2 : 0;
   for (let i = 0; i < Math.floor(wingCount / 2); i++) {
@@ -104,18 +193,13 @@ export function spreadInteriorDefense(assigned: AssignedPlay, width = FIELD.widt
     if (left) wings.add(left);
     if (right) wings.add(right);
   }
-  const box = assigned.players.filter((player) => player.team === "def" && !wings.has(player)).sort((a, b) => a.x - b.x);
+  const box = dbs.filter((player) => !wings.has(player));
   if (box.length < 3) return;
   const span = Math.min(width * 0.52, 11.5 + box.length * 3.7);
   const left = width * 0.5 - span / 2;
   box.forEach((player, index) => {
     const t = box.length <= 1 ? 0.5 : index / (box.length - 1);
-    player.x = clamp(left + t * span, 9.2, width - 9.2);
-    const job = defenseOf(player);
-    if (job) {
-      job.x = player.x;
-      job.stationX = player.x;
-    }
+    seatDb(player, clamp(left + t * span, 9.2, width - 9.2));
   });
 }
 
@@ -161,7 +245,8 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
         job.stationYard = job.yard;
         job.artCurve = false;
         job.stutter = false;
-        player.x = clamp(player.x, snap - 5.4, snap + 5.4);
+        // Two linebackers already sit a hash gap apart. This clamp would pull them inside the hashes.
+        if (lbs.length !== 2) player.x = clamp(player.x, snap - 5.4, snap + 5.4);
         player.yard = los + 4.6;
       }
     }
@@ -196,7 +281,9 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     });
     lbs.forEach((player, index, all) => {
       const t = all.length <= 1 ? 0 : index / (all.length - 1) - 0.5;
-      player.x = snap + t * Math.min(width * 0.48, 14.5);
+      // Two linebackers use the hash gap, centered on the snap. Wider counts keep the Bear span.
+      const span = all.length === 2 ? hashHalf(width) * 2 : Math.min(width * 0.48, 14.5);
+      player.x = snap + t * span;
       player.yard = los + 4.6;
     });
     const ols = assigned.players.filter((player) => player.role === "OL").sort((a, b) => a.x - b.x);
@@ -211,10 +298,10 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
       }
       player.yard = los + 2.85;
     });
-  } else if (scheme === "wide" && dbs.length >= 3) {
+  } else if (scheme === "wide") {
     const left = dbs[0];
     const right = dbs[dbs.length - 1];
-    if (left && right) {
+    if (dbs.length >= 3 && left && right && left !== right) {
       left.x = clamp(left.x - 2.6, 2.4, snap - 7);
       right.x = clamp(right.x + 2.6, snap + 7, width - 2.4);
       left.yard += 2.5;
@@ -248,7 +335,7 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     const inner = lbs.slice(1, Math.max(1, lbs.length - 1));
     const bump = inner.length >= 2 ? inner.slice(0, 2) : lbs.slice(0, 2);
     for (const player of bump) {
-      player.yard += 2.5;
+      player.yard = Math.min(los + 5, Math.max(los + 2, player.yard + 2.5));
       const job = defenseOf(player);
       if (job && job.job !== "blitz") {
         job.yard = Math.max(job.yard, player.yard);
@@ -290,12 +377,37 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     }
   }
 
+  // Two linebackers keep the hash split. Unstack and the blocker nudge do not walk them off it.
+  const pairX = new Map<string, number>();
+  if (lbs.length === 2) {
+    for (const player of lbs) pairX.set(player.id, player.x);
+  }
+
   const defenders = assigned.players.filter((player) => player.team === "def");
-  const blockers = assigned.players.filter((player) => player.role === "OL" || player.role === "TE" || player.role === "FB" || player.role === "QB");
-  unstack(defenders, 2.05);
-  unstack(blockers, 1.55);
+  // The quarterback stays on his snap spot. He is not in this nudge, so 0 QB and 1 QB
+  // keep the same OL/TE row and the same tackle alignment.
+  const blockers = assigned.players.filter((player) => player.role === "OL" || player.role === "TE" || player.role === "FB");
+  const tackleX = new Map<string, number>();
+  for (const player of defenders) {
+    if (player.role === "DT") tackleX.set(player.id, player.x);
+  }
+  // Each front group separates only from itself, so one count cannot shove another.
+  // On a narrow field the tackle separation is what pulls them off the snap, so it is undone below.
+  unstack(defenders.filter((player) => player.role === "DT"), 2.05);
+  unstack(defenders.filter((player) => player.role === "LB"), 2.05);
+  unstack(defenders.filter((player) => player.role === "DB"), 2.05);
+  // Slotted fullbacks keep the gap slots. The narrow line gap is 1.625, so this
+  // stays under it and does not spread a legal row back out.
+  unstack(
+    blockers.filter((player) => player.role !== "FB"),
+    1.2,
+  );
+  const stackedFullbacks = blockers.filter((player) => player.role === "FB");
+  if (stackedFullbacks.length > 4) unstack(stackedFullbacks, 1.55);
   for (const defender of defenders) {
     for (const blocker of blockers) {
+      // The fourth fullback stands 1.5 yards off the ball. He does not push the front off its spots.
+      if (blocker.role === "FB" && blocker.yard > los - 2) continue;
       const gap = radius(defender.role) + radius(blocker.role) + 0.25;
       const dx = defender.x - blocker.x;
       const dy = defender.yard - blocker.yard;
@@ -309,11 +421,39 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
   }
   for (const defender of defenders) {
     defender.x = clamp(defender.x, 2.2, width - 2.2);
-    defender.yard = clamp(defender.yard, los + 1.15, cap);
+    const paired = pairX.get(defender.id);
+    if (paired != null) defender.x = paired;
+    let yardFloor = los + 1.15;
+    let yardCap = cap;
+    if (defender.role === "DT") {
+      yardFloor = los + 0.05;
+      yardCap = Math.min(cap, los + 0.99);
+    } else if (defender.role === "LB") {
+      yardCap = Math.min(cap, los + 5);
+      yardFloor = Math.min(los + 2, yardCap);
+    }
+    defender.yard = clamp(defender.yard, yardFloor, yardCap);
     const job = defenseOf(defender);
     if (job && Math.abs(job.x - defender.x) < 1.4) {
       job.x = defender.x;
       job.stationX = defender.x;
+    }
+  }
+  const tackles = defenders.filter((player) => player.role === "DT");
+  if (tackleRowBroken(tackles, snap, width)) {
+    const clampedX = new Map(tackles.map((player) => [player.id, player.x]));
+    for (const player of tackles) {
+      const x = tackleX.get(player.id);
+      if (x != null) player.x = x;
+    }
+    fitTacklesToField(tackles, snap, width);
+    for (const player of tackles) {
+      const job = defenseOf(player);
+      const clamped = clampedX.get(player.id);
+      if (job && clamped != null && Math.abs(job.x - clamped) < 1.4) {
+        job.x = player.x;
+        job.stationX = player.x;
+      }
     }
   }
   const looked = assigned.players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
@@ -326,6 +466,7 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
   }
 
   spreadInteriorDefense(assigned, width);
+  applyDbCountDepths(assigned.players, los);
 
   for (const player of assigned.players) {
     player.facingX = 0;

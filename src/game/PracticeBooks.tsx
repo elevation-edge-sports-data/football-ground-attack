@@ -77,6 +77,7 @@ function Book({
   index,
   names,
   diagram,
+  showArt,
   onPick,
 }: {
   side: "off" | "def";
@@ -84,6 +85,8 @@ function Book({
   index: number;
   names: readonly string[];
   diagram: PlayDiagram | null;
+  /** Route diagram. Hidden for the live play, shown again between plays. */
+  showArt: boolean;
   onPick: (index: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -162,7 +165,13 @@ function Book({
             );
           })}
         </div>
-        <canvas ref={canvasRef} width={328} height={244} style={{ display: "block", width: 328, height: 244 }} />
+        <canvas
+          ref={canvasRef}
+          width={328}
+          height={244}
+          aria-hidden={showArt ? undefined : true}
+          style={{ display: showArt ? "block" : "none", width: 328, height: 244 }}
+        />
       </div>
     </div>
   );
@@ -174,6 +183,8 @@ export function PracticeBooks() {
   const board = useSyncExternalStore(subscribeBoard, readBoard);
   const kits = useSyncExternalStore(subscribeUniforms, getUniformSelection);
   const hidePreviews = board.replay && (ui.mode === "practice" || board.mode === "game");
+  // The route diagram is the play-art preview. It stays up between plays and drops out while the snap is live.
+  const showArt = board.awaitSnap || board.over;
   if (ui.mode === "practice") {
     const userSide = board.side === "def" ? "def" : "off";
     const offJersey = kitById(kitIdForSquad("off", userSide, kits)).jersey;
@@ -211,6 +222,7 @@ export function PracticeBooks() {
           index={ui.schemeIndex}
           names={DEF_SCHEMES.map((scheme) => scheme.name)}
           diagram={ui.diagram}
+          showArt={showArt}
           onPick={setPracticeScheme}
         />
         <Book
@@ -219,6 +231,7 @@ export function PracticeBooks() {
           index={ui.playIndex}
           names={OFF_PLAYS.map((play) => play.name)}
           diagram={ui.diagram}
+          showArt={showArt}
           onPick={setPracticePlay}
         />
       </div>
@@ -239,6 +252,7 @@ export function PracticeBooks() {
           index={readArmedCallIndex(side)}
           names={names}
           diagram={ui.diagram}
+          showArt={showArt}
           onPick={setGameUserCall}
         />
       </div>

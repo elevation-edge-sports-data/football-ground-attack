@@ -8,7 +8,15 @@ import { attachAssignments, type AssignedPlay } from "./assign";
 import { applyPresnapLook, spreadInteriorDefense } from "./look";
 import { applyPresnapStances } from "./stance";
 import { readPersonnel } from "./personnel";
-import { createPlaySim, hashSnapX, placeEntitiesForNewPlay, sideYardToAbsolute, type PlacementCall } from "./place";
+import {
+  advanceFullbackSlots,
+  createPlaySim,
+  hashSnapX,
+  holdFullbackSlots,
+  placeEntitiesForNewPlay,
+  sideYardToAbsolute,
+  type PlacementCall,
+} from "./place";
 import { DEF_SCHEMES, OFF_PLAYS } from "./plays";
 import { readPrefs, writePrefs } from "../prefs";
 import { setReplayCamera } from "../replayCamera";
@@ -540,7 +548,13 @@ export function setSessionMode(next: SessionMode) {
     resetMatchHud();
     sessionMode = mode;
     setYouHomeApplies(true);
-    if (mode === "game") gameQ1Side = board.side === "def" ? "def" : "off";
+    if (mode === "game") {
+      const kicked = rollPlaySide();
+      board = { ...board, side: kicked };
+      gameQ1Side = kicked;
+    } else {
+      gameQ1Side = null;
+    }
     writePrefs({ mode: sessionMode });
     queueStage();
     return;
@@ -548,6 +562,12 @@ export function setSessionMode(next: SessionMode) {
   clearSittingStats(true);
   sessionMode = mode;
   setYouHomeApplies(true);
+  if (mode === "game" && gameQ1Side == null) {
+    const kicked = rollPlaySide();
+    board = { ...board, side: kicked };
+    gameQ1Side = kicked;
+    gameQ3SideApplied = false;
+  }
   writePrefs({ mode: sessionMode });
   queueStage();
 }
@@ -588,7 +608,13 @@ export function restageArmedSnap() {
     stageDead = false;
   }
   const wasPaused = board.paused;
-  queueStage();
+  // Personnel and field-width rebuilds keep the fullback slots. A new snap does not.
+  holdFullbackSlots(true);
+  try {
+    queueStage();
+  } finally {
+    holdFullbackSlots(false);
+  }
   if (wasPaused && !board.paused) {
     board = { ...board, paused: true };
     publish();
@@ -1372,6 +1398,7 @@ function applyGameKickSide() {
 }
 
 export function buildPlay(call: PlacementCall): { sim: Sim; assigned: AssignedPlay } {
+  advanceFullbackSlots();
   applyGameQ3Side();
   applyGameKickSide();
   resetFirstContact();
@@ -1437,7 +1464,9 @@ export function bootFullPlay(rollSide = false): { sim: Sim; assigned: AssignedPl
   resetDefense();
   gameQ3SideApplied = false;
   gameKickSide = null;
-  const side: "off" | "def" = sessionMode === "game" && rollSide
+  // A new GAME coin-flips the kickoff. Reset keeps the side already chosen.
+  // Q3 flips from gameQ1Side, so the opening roll is the only random choice.
+  const side: "off" | "def" = sessionMode === "game" && (rollSide || gameQ1Side == null)
     ? rollPlaySide()
     : board.side === "def" ? "def" : "off";
   gameQ1Side = sessionMode === "game" ? side : null;

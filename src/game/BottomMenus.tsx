@@ -475,14 +475,63 @@ function EzArtRow({ art, tone }: { art: EzArtId; tone: EzTone }) {
   );
 }
 
+/** 40% narrower than the 400px track, and 30% shorter. */
+const FIELD_WIDTH_SLIDER_PX = 240;
+
 const widthSliderRow: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "minmax(140px, 200px) auto",
-  gap: 8,
+  display: "flex",
   alignItems: "center",
-  minHeight: 44,
-  minWidth: 180,
+  gap: 8,
+  height: "100%",
 };
+
+const widthSliderPanel: CSSProperties = {
+  ...popRow("start"),
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 40,
+  overflow: "visible",
+  width: "max-content",
+  pointerEvents: "auto",
+  boxSizing: "border-box",
+  height: 44,
+  minHeight: 44,
+  padding: "0 10px",
+  borderRadius: 6,
+  border: "1px solid #243040",
+  background: "rgba(23, 30, 40, 0.96)",
+};
+
+const widthRangeStyle: CSSProperties = {
+  width: FIELD_WIDTH_SLIDER_PX,
+  minWidth: FIELD_WIDTH_SLIDER_PX,
+  flex: "0 0 auto",
+  height: 14.7,
+  margin: 0,
+  cursor: "pointer",
+  background: "transparent",
+};
+
+function widthStepStyle(enabled: boolean): CSSProperties {
+  return {
+    ...choiceStyle(false, enabled),
+    boxSizing: "border-box",
+    width: 32,
+    minWidth: 32,
+    height: 32,
+    minHeight: 32,
+    padding: 0,
+    flex: "0 0 auto",
+    textTransform: "none",
+    fontSize: 18,
+    lineHeight: 1,
+  };
+}
+
+function adjustFieldWidth(width: number, delta: -1 | 1) {
+  const next = Math.min(FIELD_WIDTH_MAX, Math.max(FIELD_WIDTH_MIN, width + delta * FIELD_WIDTH_STEP));
+  if (setFieldWidth(next)) relayoutFieldWidth();
+}
 
 /** Same face as the WIDTH button. The unit stays YD. */
 const widthSliderValue: CSSProperties = {
@@ -495,27 +544,93 @@ const widthSliderValue: CSSProperties = {
 };
 
 function WidthRow({ width }: { width: number }) {
+  const atMin = width <= FIELD_WIDTH_MIN;
+  const atMax = width >= FIELD_WIDTH_MAX;
   return (
-    <div role="group" aria-label="Field width" style={popRow("start")}>
-      <label style={widthSliderRow}>
+    <div role="group" aria-label="Field width" style={widthSliderPanel}>
+      <style>{WIDTH_RANGE_CSS}</style>
+      <div style={widthSliderRow}>
+        <button
+          type="button"
+          aria-label="Decrease field width"
+          disabled={atMin}
+          style={widthStepStyle(!atMin)}
+          onMouseDown={holdFocus}
+          onClick={() => adjustFieldWidth(width, -1)}
+        >
+          -
+        </button>
         <input
+          className="field-width-range"
           type="range"
           min={FIELD_WIDTH_MIN}
           max={FIELD_WIDTH_MAX}
           step={FIELD_WIDTH_STEP}
           value={width}
           aria-label="Field width"
-          style={tuneInput}
+          style={widthRangeStyle}
           onChange={(event) => {
             const yards = Number(event.target.value);
             if (setFieldWidth(yards)) relayoutFieldWidth();
           }}
         />
+        <button
+          type="button"
+          aria-label="Increase field width"
+          disabled={atMax}
+          style={widthStepStyle(!atMax)}
+          onMouseDown={holdFocus}
+          onClick={() => adjustFieldWidth(width, 1)}
+        >
+          +
+        </button>
         <b style={widthSliderValue}>{width} YD</b>
-      </label>
+      </div>
     </div>
   );
 }
+
+const WIDTH_RANGE_CSS = `
+.field-width-range {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field-width-range:focus {
+  outline: none;
+}
+.field-width-range::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 5.25px;
+  background: #8b9688;
+  border-radius: 999px;
+}
+.field-width-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11.55px;
+  height: 11.55px;
+  margin-top: -3.15px;
+  border-radius: 50%;
+  background: #e8ece6;
+  border: 2px solid #070b12;
+  cursor: pointer;
+}
+.field-width-range::-moz-range-track {
+  width: 100%;
+  height: 5.25px;
+  background: #8b9688;
+  border: none;
+  border-radius: 999px;
+}
+.field-width-range::-moz-range-thumb {
+  width: 11.55px;
+  height: 11.55px;
+  border-radius: 50%;
+  background: #e8ece6;
+  border: 2px solid #070b12;
+  cursor: pointer;
+}
+`;
 
 const ezInput: CSSProperties = {
   minHeight: 44,

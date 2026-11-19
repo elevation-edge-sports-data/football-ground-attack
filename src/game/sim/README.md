@@ -57,21 +57,20 @@ There is no named formation list. Canvas `placeEntitiesForNewPlay` (1909) builds
 
 Offense, measured from `snapX` and the LOS. `wt` is `fieldWideT`.
 
-- HB: snap plus a small random X, yard `LOS - 5`. This is the carrier (`rb`).
-- OL: `numOL` across the ball, gap `2.6 + wt * 1.55`, yard `LOS - 0.48`.
-- TE: alternating sides outside the OL. Rank is `floor(i / 2)`. Offset `olHalf + (1.85 + wt * 2.2) + rank * (1.55 + wt * 1.35)`. Yard `LOS - 0.4`.
-- QB, if any: `snap - 0.35`, yard `LOS - 1.05`. Pushed onto the blocker list.
-- FB: stacked behind the QB. Yard `qbYard - 1.85 - i * 0.55`.
+- HB: the primary back (`hb-0`, the carrier) uses the first QB's x. Further backs stay at `snap` plus `(i - (n - 1) / 2) * backGap`. With no QB, the primary back keeps the old snap offset. Yard `LOS - 5`.
+- OL and TE: one row, gap `(2.6 + wt * 1.55) / 2 * 1.25` between every neighbor. A central body is on the snap. An odd count uses the middle player. An even count uses one of the two central players and puts the extra bodies on the left or right sideline with equal chance (`call.random`, or `Math.random` when no draw is supplied). OL fill the middle slots left to right before that side roll. TEs alternate outside them, even index left and odd index right, with rank `floor(i / 2)` further out. When that split would put two more OL on one side of the snap than the other, the extra left TE moves to the right wing so the OL sides differ by at most one. An even number of tight ends is then repacked around the offensive line, chosen with `call.random` or `Math.random` after the side roll. When at least one OL is in the row, an OL stays on the snap and either wing may have up to two more tight ends than the other, including 3–1 and 1–3 around a single OL. A centered row that would put a TE on the snap while an OL is present shifts so that OL is on the snap. Odd tight-end counts are not re-rolled. With no OL, the repack stays on the centered slots. OL yard `LOS - 0.48`. TE yard `LOS - 0.4`.
+- QB: every quarterback stands on the snap. Depth is 1.5 or 3 yards, chosen once per snap and kept when the line or fullbacks change. Pushed onto the blocker list.
+- FB: one, two, or three stand 3 yards off the LOS. Their x slots are the 3-OL, 0-TE places: behind each of those three linemen, or halfway between either adjacent pair. Each offset is that multiple of the current OL gap (`(2.6 + wt * 1.55) / 2 * 1.25`), so a narrower field pulls the fullbacks in with the line. The snap picks a random set of those slots and keeps it when OL, TE, or the quarterback depth stays put. A quarterback at 3 yards owns the center slot, so no fullback stands on that same spot. With four, three keep that 3-yard depth on three of those slots, and the fourth stands 1.5 yards off the LOS on one of the other slots except the middle. Five or more stay stacked at `LOS - 1.05 - 1.85 - i * 0.55`.
 
 Defense uses the scheme cluster and depths. Depths shrink when the north end zone is close: `depthScale = min(1, room / 16)`.
 
-- DT: across the snap, about `LOS + min(3.25, room * 0.22)`.
-- LB: `clusterX` at `depthLB * depthScale`. Modes are middle, wide, left, right, and the spread default.
-- DB slots by count: 1 free safety, 2 safeties, 3 corners plus free safety, 4 adds the strong safety, 5 adds a nickel, 6 and up add a dime. `dbRole` is the slot. The group stays DB.
+- DT: across the snap, depth `min(0.84, room * 0.22 * 0.84 / 3.25)` plus the old ±0.15 jitter, clamped so `yard - LOS < 1`.
+- LB: `clusterX`. Scheme depths of 3.6–6.8 fold into 2.25–4.75 yards, then ±0.2 jitter. The body is clamped to 2–5 yards off the LOS. Modes are middle, wide, left, right, and the spread default.
+- DB slots by count: 1 free safety, 2 safeties, 3 corners plus free safety, 4 adds the strong safety, 5 adds a nickel, 6 and up add a dime. `dbRole` is the slot. The group stays DB. One or two DBs stand 8 yards off the LOS. With 3–5, the outer pair stands at 3 yards and the DBs between them stand at 8.
 
 After the slots, the same function calls `assignDefenseJobs`, `assignBlockJobs`, `applyCellBlockTweaks`, `applyCellDefenseTweaks`, `limitDtPenetration` (at most one DT crosses the LOS, and only on overload, fire zone, bear, walk-up, or the unused storm call), `applyPresnapLook`, the lone-DB and two-DB aligns, `clampDbWings`, `spreadInteriorDefense`, `assignStations`, and `pinOffenseToOwnSide`.
 
-`pinOffenseToOwnSide` (2455) caps OL and TE at `LOS - 0.28`, QB at `LOS - 0.85`, FB at `LOS - 2`, and the HB at `LOS - 4.2`.
+`pinOffenseToOwnSide` (2455) caps OL and TE at `LOS - 0.28`, QB at `LOS - 0.85`, FB at `LOS - 1.5`, and the HB at `LOS - 4.2`.
 
 `stationForDefender` / `stationForBlocker` (2482, 2495) turn a job or a block mode into `contain | fold | alley | cutback | gap`. That station is a label on the assignment, not a second behavior.
 
@@ -162,7 +161,7 @@ After `attachAssignments`, call `applyPresnapLook(assigned, los)` once. It is no
 
 The pass matches the canvas scheme picture: Quarters and Walk-Up plant deep fourths, Prevent plants a deep cloud, Bear tightens the box and shades tackles into the offensive-line gaps, Fire Zone bumps the corners and inside linebackers, Overload sets the two inside safeties. Bodies are unstacked, defenders are pushed off the line, and one or two defensive backs are planted deep. Offense faces north. Defense faces south.
 
-`spreadInteriorDefense` then runs. With four or more defensive backs the outer ones stay wings (four wings when there are six or more). Everyone else is spaced across `min(width * 0.52, 11.5 + count * 3.7)` yards, inset 9.2 yards from each sideline. Landmark X follows that spot.
+`spreadInteriorDefense` then runs. Three defensive backs are spaced across `min(width * 0.52, 11.5 + 3 * 3.7)` yards, inset 9.2 yards from each sideline. Four keep those same outside spots and stand equally spaced between them. With five or more, the outer ones stay wings (four wings when there are six or more) and the other backs, when there are at least three of them, use that same span with their own count. Tackles and linebackers keep the X they had. Landmark X follows that spot.
 
 ## What remains
 

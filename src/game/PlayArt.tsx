@@ -44,6 +44,19 @@ function fadeAlpha(fade: ArtFade, age: number, practice: boolean) {
   return defenseArtAlpha(age, 0.5, practice);
 }
 
+/** Game and practice hold the preview at full strength between plays. Drill still fades from the snap. */
+function shownArtAge(age: number) {
+  const mode = readBoard().mode;
+  if (mode === "game" || mode === "practice") return 0;
+  return age;
+}
+
+/** After the snap and before the whistle, in game or practice. */
+function playArtConcealed() {
+  const board = readBoard();
+  return (board.mode === "game" || board.mode === "practice") && !board.awaitSnap && !board.over;
+}
+
 function positionsOf(points: readonly FieldPoint[]) {
   const data = new Float32Array(points.length * 3);
   for (let i = 0; i < points.length; i++) {
@@ -223,7 +236,8 @@ export function PlayArt({
     const mounted = mountArt(next.model);
     holderGroup.add(mounted.group);
     live.current = { ...mounted, token: next.token };
-    applyAge(mounted.items, age.current, readMode() === "practice");
+    mounted.group.visible = !playArtConcealed();
+    applyAge(mounted.items, shownArtAge(age.current), readMode() === "practice");
   };
 
   useLayoutEffect(() => {
@@ -255,10 +269,15 @@ export function PlayArt({
     if (live.current?.token !== next.token) install();
     const current = live.current;
     if (!current) return;
+    if (playArtConcealed()) {
+      current.group.visible = false;
+      return;
+    }
     const practice = readMode() === "practice";
-    const show = !playArtGone(age.current, practice);
+    const shown = shownArtAge(age.current);
+    const show = !playArtGone(shown, practice);
     current.group.visible = show;
-    if (show) applyAge(current.items, age.current, practice);
+    if (show) applyAge(current.items, shown, practice);
   });
 
   if (hide) return null;

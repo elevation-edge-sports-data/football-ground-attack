@@ -2,7 +2,6 @@ import { useSyncExternalStore, type CSSProperties } from "react";
 import { readArmedCallIndex, readBoard, setGameUserCall, subscribeBoard } from "./sim/boot";
 import { DEF_SCHEMES, OFF_PLAYS } from "./sim/plays";
 import {
-  DEFENSE_PERSONNEL,
   OFFENSE_PERSONNEL,
   PERSONNEL_LABEL,
   canStepPersonnel,
@@ -198,6 +197,9 @@ function Panel({
   );
 }
 
+/** Defense panel order. Cap trim still walks DEFENSE_PERSONNEL (dt, lb, db). */
+const DEFENSE_PANEL = ["db", "lb", "dt"] as const satisfies readonly PersonnelKey[];
+
 /** Offense and defense personnel steppers. Counts apply on the upcoming snap. */
 export function PersonnelHud() {
   const counts = useSyncExternalStore(subscribePersonnel, readPersonnel);
@@ -223,7 +225,7 @@ export function PersonnelHud() {
         title="Defense"
         call={board.schemeName}
         pick={picking && userDef ? { side: "def", names: defNames } : null}
-        groups={DEFENSE_PERSONNEL}
+        groups={DEFENSE_PANEL}
         counts={counts}
         steps={steps}
       />

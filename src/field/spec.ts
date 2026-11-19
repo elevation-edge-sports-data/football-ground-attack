@@ -48,8 +48,6 @@ export const FIELD = {
     return width;
   },
   postGapFrac: 0.082,
-  postGapMin: 2.6,
-  postGapMax: 9,
   grassLight: "#5d8f4a",
   grassDark: "#4e7d3e",
   line: "#ecf0e6",
@@ -84,9 +82,14 @@ export function playMaxX() {
 export const PLAY_MIN_YARD = SOUTH_BACK - PLAY_MARGIN;
 export const PLAY_MAX_YARD = NORTH_BACK + PLAY_MARGIN;
 
-/** Same gap the canvas uses for hashes and the uprights. */
+/**
+ * Half the distance between the inner hashes, and half the crossbar.
+ * At 50 yards this is 4.1: 20.9 from each hash to the nearer sideline,
+ * 8.2 between the hashes, hash ticks 0.656, crossbar 8.2.
+ * Those lengths stay the same fraction of every field width.
+ */
 export function hashHalf(width = FIELD.width) {
-  return clamp(width * FIELD.postGapFrac, FIELD.postGapMin, FIELD.postGapMax);
+  return width * FIELD.postGapFrac;
 }
 
 export function hashLeft(width = FIELD.width) {

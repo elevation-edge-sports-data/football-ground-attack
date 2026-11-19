@@ -358,6 +358,8 @@ export function buildMarkings(width = FIELD.width): FieldMarkings {
   const left = hashLeft(width);
   const right = hashRight(width);
   const inner = hashReach(width);
+  // Sideline ticks are 0.85 yd on a 50-yard field, then that same fraction of width.
+  const sideTick = (width / 50) * 0.85;
 
   for (let yard = 0; yard <= FIELD.length; yard += 5) {
     const bucket = yard % 10 === 0 ? major : minor;
@@ -373,8 +375,8 @@ export function buildMarkings(width = FIELD.width): FieldMarkings {
   for (let decade = 0; decade < FIELD.length; decade += 10) {
     for (const off of [1, 2, 3, 4, 6, 7, 8, 9]) {
       const yard = decade + off;
-      pushSeg(minor, 0, yard, 0.85, yard);
-      pushSeg(minor, width, yard, width - 0.85, yard);
+      pushSeg(minor, 0, yard, sideTick, yard);
+      pushSeg(minor, width, yard, width - sideTick, yard);
       pushSeg(minor, left, yard, left - inner, yard);
       pushSeg(minor, right, yard, right + inner, yard);
     }

@@ -17,6 +17,7 @@ Not affiliated with, endorsed by, or licensed by any league or team.
 - Live page is the 3D field. `npm run build` packs it into `index.html`.
 - Canvas v10 is `archive/v10/`. The archive list on the live page runs v0–v10, with v11 current.
 - GitHub: https://github.com/elevation-edge-sports-data/football-ground-attack
+- Two linebackers line up a hash-gap apart, centered on the snap. Depth stays 2–5 yards.
 
 ## v10.4
 

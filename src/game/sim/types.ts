@@ -217,7 +217,7 @@ export type FormationCall = {
 /** A placed body, before jobs are assigned. Yards are relative to the snap. */
 export type AlignSlot = {
   group: PersonnelGroup;
-  /** Index within the group. OL and DL run left to right. FB stacks behind the QB. */
+  /** Index within the group. OL, DL, and slotted fullbacks run left to right. */
   index: number;
   /** Yards right of the snap spot. Negative is toward the left sideline. */
   xFromSnap: number;
