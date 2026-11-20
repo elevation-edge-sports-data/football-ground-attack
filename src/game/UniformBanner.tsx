@@ -221,7 +221,7 @@ export function TeamScore() {
       aria-label="Team score"
       style={{
         display: "flex",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         alignItems: "center",
         gap: 8,
         marginTop: 6,

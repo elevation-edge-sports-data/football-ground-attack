@@ -41,7 +41,7 @@ export type StoredPrefs = {
     breakBlock?: number;
     breakTackle?: number;
   };
-  personnel?: Partial<Record<"ol" | "te" | "fb" | "qb" | "dt" | "lb" | "db", number>>;
+  personnel?: Partial<Record<"ol" | "te" | "wr" | "fb" | "qb" | "dt" | "lb" | "db", number>>;
   kits?: { offId?: number; defId?: number };
 };
 

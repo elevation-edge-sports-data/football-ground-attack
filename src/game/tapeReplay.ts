@@ -1,6 +1,7 @@
 /**
  * In-game replay tape. Hockey stores 1800 sim frames (30 seconds at 60 Hz).
- * Playback is a copy of that ring. The live roster is not rewritten, so exit
+ * Pre-snap stance frames sit on top of that cap while their play is still recorded.
+ * Playback is a copy of the buffer. The live roster is not rewritten, so exit
  * puts the pause menu back on the real players.
  */
 import { clamp, playMaxX, PLAY_MAX_YARD, PLAY_MIN_X, PLAY_MIN_YARD } from "../field/spec";
@@ -42,15 +43,23 @@ export type TapeFrame = {
   /** User role when the frame was live. Kits stay with that lineup. */
   side: "off" | "def";
   bodies: TapeBody[];
+  /** Pre-snap lineup. The 30s cap does not drop this while its play is still on the tape. */
+  opening?: boolean;
+  /** Armed play this frame belongs to. */
+  playId?: number;
 };
 
 /** -2 and 2 are the triggers. -1 and 1 are the bumpers. */
 export type TapeScrub = -2 | -1 | 0 | 1 | 2;
 
-const buf: TapeFrame[] = new Array(TAPE_CAP);
-let write = 0;
+/** Chronological tape. Opening frames can make this longer than `TAPE_CAP`. */
+const order: TapeFrame[] = [];
+/** Live frames only. Opening stances do not count toward `TAPE_CAP`. */
+let liveCount = 0;
 let count = 0;
 let acc = 0;
+/** Bumps when a new lineup is armed, so a later cap can tell plays apart. */
+let currentPlay = 0;
 
 let play: TapeFrame[] = [];
 let on = false;
@@ -214,30 +223,65 @@ function capture(sim: Sim): TapeFrame {
   };
 }
 
-function push(frame: TapeFrame) {
-  buf[write] = frame;
-  write = (write + 1) % TAPE_CAP;
-  if (count < TAPE_CAP) count += 1;
+function dropDeadOpenings() {
+  const livePlays = new Set<number>();
+  for (const frame of order) {
+    if (!frame.opening && frame.playId != null) livePlays.add(frame.playId);
+  }
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const frame = order[i];
+    if (!frame?.opening) continue;
+    const playId = frame.playId ?? 0;
+    if (playId === currentPlay || livePlays.has(playId)) continue;
+    order.splice(i, 1);
+  }
+}
+
+function push(frame: TapeFrame, opening = false) {
+  if (opening) frame.opening = true;
+  frame.playId = currentPlay;
+  order.push(frame);
+  if (!opening) liveCount += 1;
+  while (liveCount > TAPE_CAP) {
+    const idx = order.findIndex((item) => !item.opening);
+    if (idx < 0) break;
+    order.splice(idx, 1);
+    liveCount -= 1;
+  }
+  dropDeadOpenings();
+  count = order.length;
   publishReady();
 }
 
-/** One sample per 60 Hz tick while the play is live. A hitch does not flood the ring. */
-export function noteTape(dt: number, sim: Sim) {
+/**
+ * A new lineup. Opening frames already stored for a play that has no live
+ * footage left are released. The new play's stances are kept.
+ */
+export function beginTapePlay() {
+  currentPlay += 1;
+  dropDeadOpenings();
+  count = order.length;
+  publishReady();
+}
+
+/** One sample per 60 Hz tick while the play is live. A hitch does not flood the tape. */
+export function noteTape(dt: number, sim: Sim, opening = false) {
   if (on) return;
   acc += Math.max(0, dt);
   if (acc < 1 / TAPE_HZ) return;
   acc = Math.min(acc - 1 / TAPE_HZ, 1 / TAPE_HZ);
-  push(capture(sim));
+  push(capture(sim), opening);
+}
+
+/** Lineup poses at the snap, before anyone steps. Kept even when the 30s cap trims the play. */
+export function snapTapeOpening(sim: Sim) {
+  if (on) return;
+  acc = 0;
+  push(capture(sim), true);
 }
 
 function dump(): TapeFrame[] {
-  const out: TapeFrame[] = [];
-  const start = count < TAPE_CAP ? 0 : write;
-  for (let i = 0; i < count; i += 1) {
-    const frame = buf[(start + i) % TAPE_CAP];
-    if (frame) out.push(frame);
-  }
-  return out;
+  return order.slice();
 }
 
 export function beginTape(): boolean {
@@ -261,6 +305,8 @@ function cloneFrame(frame: TapeFrame): TapeFrame {
     ballYard: frame.ballYard,
     side: frame.side,
     bodies: frame.bodies.map((body) => ({ ...body })),
+    ...(frame.opening ? { opening: true } : {}),
+    ...(frame.playId != null ? { playId: frame.playId } : {}),
   };
 }
 
@@ -569,13 +615,14 @@ const JERSEY: Record<string, readonly number[]> = {
   HB: [28],
   FB: [44],
   TE: [80, 81, 84, 85, 86, 87, 88],
+  WR: [11, 15, 16, 17, 18],
   OL: [60, 61, 63, 65, 70, 72, 74, 76],
   DT: [90, 92, 95, 97, 98],
   LB: [54, 55, 56, 58],
   DB: [20, 21, 24, 26, 31, 32],
 };
 
-const FORMATION_ROLES: readonly FormationRole[] = ["QB", "HB", "FB", "TE", "OL", "DT", "LB", "DB"];
+const FORMATION_ROLES: readonly FormationRole[] = ["QB", "HB", "FB", "TE", "WR", "OL", "DT", "LB", "DB"];
 
 function formationRole(role: string): FormationRole | undefined {
   return (FORMATION_ROLES as readonly string[]).includes(role) ? (role as FormationRole) : undefined;
@@ -713,7 +760,9 @@ export function stepTape(dt: number, scrub: TapeScrub) {
 }
 
 export function selfTestTape() {
-  write = 0;
+  order.length = 0;
+  liveCount = 0;
+  currentPlay = 0;
   count = 0;
   acc = 0;
   play = [];
@@ -797,4 +846,33 @@ export function selfTestTape() {
   markTapeRange();
   if (tapeRangeMarkPcts().length !== 0) throw new Error("mark while closed");
   if (!readTapeReady()) throw new Error("buffer was cleared");
+  order.length = 0;
+  liveCount = 0;
+  count = 0;
+  acc = 0;
+  beginTapePlay();
+  for (let i = 0; i < 5; i += 1) {
+    sim.players[0]!.x = -1 - i;
+    noteTape(1 / TAPE_HZ, sim, true);
+  }
+  for (let i = 0; i < TAPE_CAP + 3; i += 1) {
+    sim.players[0]!.x = 1000 + i;
+    noteTape(1 / TAPE_HZ, sim);
+  }
+  if (liveCount !== TAPE_CAP) throw new Error("live cap");
+  if (!beginTape()) throw new Error("opening tape");
+  seekTape(0);
+  const first = tapeFrame();
+  if (!first?.opening || first.bodies[0]?.x !== -1) throw new Error("opening frame was trimmed");
+  stopTape();
+  beginTapePlay();
+  for (let i = 0; i < TAPE_CAP; i += 1) {
+    sim.players[0]!.x = 5000 + i;
+    noteTape(1 / TAPE_HZ, sim);
+  }
+  if (order.some((frame) => frame.opening && (frame.bodies[0]?.x ?? 0) < 0)) {
+    throw new Error("old opening stayed after its play left the tape");
+  }
+  const kept = order.find((frame) => frame.opening);
+  if (kept) throw new Error("a finished play kept its lineup after the cap");
 }

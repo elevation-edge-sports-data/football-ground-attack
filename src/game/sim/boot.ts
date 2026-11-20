@@ -18,6 +18,7 @@ import {
   type PlacementCall,
 } from "./place";
 import { DEF_SCHEMES, OFF_PLAYS } from "./plays";
+import { yawFreeCamHalfTurn } from "../cameraMode";
 import { readPrefs, writePrefs } from "../prefs";
 import { setReplayCamera } from "../replayCamera";
 import { playDiagram, type PlayDiagram } from "../snapArt";
@@ -910,6 +911,8 @@ function placeEnteredQuarter() {
 function finishQuarterEntry(entered: number | null) {
   if (entered !== 2 && entered !== 4) return;
   flipAttackDirection();
+  // Classic reads cameraNorth. Freestyle keeps its own yaw, so turn that too.
+  yawFreeCamHalfTurn();
   if (!pendingSpot) {
     board = { ...board, homePossession: readAttackNorth() };
     return;

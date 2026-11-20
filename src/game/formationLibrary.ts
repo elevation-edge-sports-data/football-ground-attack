@@ -58,7 +58,7 @@ export type FormationEntry = {
 const STORAGE_KEY = "fga-formation-library";
 const RETIRED_KEY = "fga-formation-retired";
 
-const ROLES: readonly FormationRole[] = ["QB", "HB", "FB", "TE", "OL", "DT", "LB", "DB"];
+const ROLES: readonly FormationRole[] = ["QB", "HB", "FB", "TE", "WR", "OL", "DT", "LB", "DB"];
 
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;

@@ -65,6 +65,12 @@ export const freeCam: CamOrbit & { captured: boolean } = {
   captured: false,
 };
 
+/**
+ * Q1→Q2 and Q3→Q4 add one half-turn here. The rig applies it on the next
+ * freestyle seat or drive, then the live orbit writes theta back.
+ */
+let pendingFreeHalfTurns = 0;
+
 function isCamMode(value: unknown): value is CamMode {
   return typeof value === "string" && CAM_MODES.some((item) => item.id === value);
 }
@@ -210,6 +216,28 @@ export function writeFreeCam(dx: number, dy: number, dz: number) {
   freeCam.captured = true;
 }
 
+/** Wrap to (-PI, PI]. Same range as `orbitFromOffset`. */
+function wrapCamTheta(theta: number) {
+  return Math.atan2(Math.sin(theta), Math.cos(theta));
+}
+
+/**
+ * Quarter flips turn the field around. Freestyle keeps the same view by
+ * adding half a turn. Phi, radius, and a panned target stay put.
+ * Possession changes that do not come through the quarter flip do not call this.
+ */
+export function yawFreeCamHalfTurn() {
+  freeCam.theta = wrapCamTheta(freeCam.theta + Math.PI);
+  pendingFreeHalfTurns += 1;
+}
+
+/** Half-turns waiting for the next freestyle seat or drive. Clears the queue. */
+export function consumeFreeCamHalfTurns() {
+  const turns = pendingFreeHalfTurns;
+  pendingFreeHalfTurns = 0;
+  return turns;
+}
+
 export function selfTestCameras() {
   const subject = { x: 37.5, y: 0.9, z: -50 };
   const classic = placeClassic(subject);
@@ -241,6 +269,34 @@ export function selfTestCameras() {
   if (Math.abs(back.x - classic.eye.x) > 1e-4) throw new Error("orbit x");
   if (Math.abs(back.y - classic.eye.y) > 1e-4) throw new Error("orbit y");
   if (Math.abs(back.z - classic.eye.z) > 1e-4) throw new Error("orbit z");
+
+  // Theta 0 is +Z. Adding PI negates the XZ offset and leaves height alone.
+  const focus = { x: 10, y: 2, z: -4 };
+  const spunFrom = { theta: 0.4, phi: 0.7, radius: 20 };
+  const near = eyeFromOrbit(focus, spunFrom);
+  const far = eyeFromOrbit(focus, { ...spunFrom, theta: spunFrom.theta + Math.PI });
+  if (Math.abs((near.x - focus.x) + (far.x - focus.x)) > 1e-6) throw new Error("half turn offset x");
+  if (Math.abs((near.z - focus.z) + (far.z - focus.z)) > 1e-6) throw new Error("half turn offset z");
+  if (Math.abs(near.y - far.y) > 1e-6) throw new Error("half turn offset y");
+
+  const savedTheta = freeCam.theta;
+  const savedPhi = freeCam.phi;
+  const savedRadius = freeCam.radius;
+  const savedCaptured = freeCam.captured;
+  try {
+    yawFreeCamHalfTurn();
+    const turned = Math.atan2(Math.sin(freeCam.theta - savedTheta - Math.PI), Math.cos(freeCam.theta - savedTheta - Math.PI));
+    if (Math.abs(turned) > 1e-9) throw new Error("freestyle half turn");
+    if (freeCam.phi !== savedPhi || freeCam.radius !== savedRadius) throw new Error("freestyle half turn touched phi or radius");
+    if (consumeFreeCamHalfTurns() !== 1) throw new Error("freestyle half turn pending");
+    if (consumeFreeCamHalfTurns() !== 0) throw new Error("freestyle half turn queue");
+  } finally {
+    freeCam.theta = savedTheta;
+    freeCam.phi = savedPhi;
+    freeCam.radius = savedRadius;
+    freeCam.captured = savedCaptured;
+    consumeFreeCamHalfTurns();
+  }
   if (!(orbitYawCommand(1, 0) > 0)) throw new Error("stick right should rotateLeft positive");
   if (!(orbitYawCommand(0, 1) < 0)) throw new Error("key east should rotateLeft negative");
   if (!(orbitPitchCommand(1, 0) > 0 && orbitPitchCommand(0, 1) > 0)) throw new Error("pitch up");

@@ -174,9 +174,11 @@ function seatDb(player: AssignedPlayer, x: number) {
  */
 export function spreadInteriorDefense(assigned: AssignedPlay, width = FIELD.width) {
   const dbs = assigned.players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
+  // Three backs span 3.3 times the distance between the hashes. Four keep those outside spots.
+  const threeDbSpan = hashHalf(width) * 2 * 3.3;
   // Four backs keep the outside spots a three-back row already uses, and fill the span evenly.
   if (dbs.length === 4) {
-    const span = Math.min(width * 0.52, 11.5 + 3 * 3.7);
+    const span = threeDbSpan;
     const edge = width * 0.5 - span / 2;
     const left = clamp(edge, 9.2, width - 9.2);
     const right = clamp(edge + span, 9.2, width - 9.2);
@@ -195,7 +197,7 @@ export function spreadInteriorDefense(assigned: AssignedPlay, width = FIELD.widt
   }
   const box = dbs.filter((player) => !wings.has(player));
   if (box.length < 3) return;
-  const span = Math.min(width * 0.52, 11.5 + box.length * 3.7);
+  const span = dbs.length === 3 ? threeDbSpan : Math.min(width * 0.52, 11.5 + box.length * 3.7);
   const left = width * 0.5 - span / 2;
   box.forEach((player, index) => {
     const t = box.length <= 1 ? 0.5 : index / (box.length - 1);
@@ -245,9 +247,14 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
         job.stationYard = job.yard;
         job.artCurve = false;
         job.stutter = false;
-        // Two linebackers already sit a hash gap apart. This clamp would pull them inside the hashes.
-        if (lbs.length !== 2) player.x = clamp(player.x, snap - 5.4, snap + 5.4);
-        player.yard = los + 4.6;
+        // Two linebackers already sit a hash gap apart.
+        // Three already sit at 1.5× that split, and four at 2× that split.
+        // This clamp would pull them inside those spots.
+        if (lbs.length !== 2 && lbs.length !== 3 && lbs.length !== 4) player.x = clamp(player.x, snap - 5.4, snap + 5.4);
+        // Four linebackers already stand at 3 and 4 yards off the line.
+        // The outer pair of three already stands 3 yards off the line.
+        const outerThree = lbs.length === 3 && (player === lbs[0] || player === lbs[lbs.length - 1]);
+        if (lbs.length !== 4 && !outerThree) player.yard = los + 4.6;
       }
     }
   } else if (scheme === "prevent") {
@@ -281,10 +288,18 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     });
     lbs.forEach((player, index, all) => {
       const t = all.length <= 1 ? 0 : index / (all.length - 1) - 0.5;
-      // Two linebackers use the hash gap, centered on the snap. Wider counts keep the Bear span.
-      const span = all.length === 2 ? hashHalf(width) * 2 : Math.min(width * 0.48, 14.5);
+      // Two linebackers use the hash gap, centered on the snap.
+      // Three keep that center, with the outer pair at 1.5× that split.
+      // Four keep that center, with the outer pair at 2× that split. Wider counts keep the Bear span.
+      const twoSplit = hashHalf(width) * 2;
+      const span =
+        all.length === 2 ? twoSplit : all.length === 3 ? twoSplit * 1.5 : all.length === 4 ? twoSplit * 2 : Math.min(width * 0.48, 14.5);
       player.x = snap + t * span;
-      player.yard = los + 4.6;
+      // Three linebackers: outer pair at 3 yards. The middle keeps the Bear depth.
+      // Four linebackers: outer pair at 3 yards, inner pair together at 4. Other counts keep the Bear depth.
+      const outer = index === 0 || index === all.length - 1;
+      player.yard =
+        all.length === 4 ? (outer ? los + 3 : los + 4) : all.length === 3 && outer ? los + 3 : los + 4.6;
     });
     const ols = assigned.players.filter((player) => player.role === "OL").sort((a, b) => a.x - b.x);
     dts.forEach((player, index, all) => {
@@ -334,12 +349,17 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     }
     const inner = lbs.slice(1, Math.max(1, lbs.length - 1));
     const bump = inner.length >= 2 ? inner.slice(0, 2) : lbs.slice(0, 2);
-    for (const player of bump) {
-      player.yard = Math.min(los + 5, Math.max(los + 2, player.yard + 2.5));
-      const job = defenseOf(player);
-      if (job && job.job !== "blitz") {
-        job.yard = Math.max(job.yard, player.yard);
-        job.stationYard = job.yard;
+    // Four linebackers keep the inner pair at 4 yards. This bump would push them off it.
+    // The outer pair of three keeps its 3-yard depth. The middle linebacker still takes the bump.
+    if (lbs.length !== 4) {
+      for (const player of bump) {
+        if (lbs.length === 3 && (player === lbs[0] || player === lbs[lbs.length - 1])) continue;
+        player.yard = Math.min(los + 5, Math.max(los + 2, player.yard + 2.5));
+        const job = defenseOf(player);
+        if (job && job.job !== "blitz") {
+          job.yard = Math.max(job.yard, player.yard);
+          job.stationYard = job.yard;
+        }
       }
     }
   } else if (scheme === "overloadBlitz") {
@@ -377,10 +397,24 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     }
   }
 
-  // Two linebackers keep the hash split. Unstack and the blocker nudge do not walk them off it.
+  // One linebacker stays on the snap.
+  // Two linebackers keep the hash split.
+  // Three keep the outer pair at 1.5× that split, and four at 2× that split.
+  // Unstack and the blocker nudge do not walk them off it.
+  // Three linebackers also keep the outer pair at 3 yards.
+  // Four linebackers keep the outer pair at 3 yards and the inner pair at 4.
   const pairX = new Map<string, number>();
-  if (lbs.length === 2) {
+  const pinnedLbYard = new Map<string, number>();
+  if (lbs.length === 1 || lbs.length === 2 || lbs.length === 3 || lbs.length === 4) {
     for (const player of lbs) pairX.set(player.id, player.x);
+  }
+  if (lbs.length === 4) {
+    for (const player of lbs) pinnedLbYard.set(player.id, player.yard);
+  } else if (lbs.length === 3) {
+    const left = lbs[0];
+    const right = lbs[lbs.length - 1];
+    if (left) pinnedLbYard.set(left.id, left.yard);
+    if (right && right !== left) pinnedLbYard.set(right.id, right.yard);
   }
 
   const defenders = assigned.players.filter((player) => player.team === "def");
@@ -423,6 +457,8 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
     defender.x = clamp(defender.x, 2.2, width - 2.2);
     const paired = pairX.get(defender.id);
     if (paired != null) defender.x = paired;
+    const pinnedYard = pinnedLbYard.get(defender.id);
+    if (pinnedYard != null) defender.yard = pinnedYard;
     let yardFloor = los + 1.15;
     let yardCap = cap;
     if (defender.role === "DT") {
@@ -459,8 +495,16 @@ export function applyPresnapLook(assigned: AssignedPlay, los: number, width = FI
   const looked = assigned.players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
   const only = looked[0];
   const second = looked[1];
-  if (looked.length === 1 && only) plantDeep(only, 0.5, 11.4, width * 0.22, los, width);
-  else if (looked.length === 2 && only && second) {
+  if (looked.length === 1 && only) {
+    plantDeep(only, 0.5, 11.4, width * 0.22, los, width);
+    // One defensive back lines up on the snap. Depth stays with the count rule below.
+    only.x = snap;
+    const job = defenseOf(only);
+    if (job) {
+      job.x = snap;
+      job.stationX = snap;
+    }
+  } else if (looked.length === 2 && only && second) {
     plantDeep(only, 0.375, 11.6, width * 0.18, los, width);
     plantDeep(second, 0.625, 11.6, width * 0.18, los, width);
   }

@@ -32,14 +32,22 @@ const BALL_AHEAD = 0.22;
 const BALL_RIGHT = 0.4;
 
 /**
- * Slots from a 3-OL, 0-TE line: behind each lineman, and halfway between either
- * adjacent pair. Multiples of the live OL gap, not of the real row.
+ * Slots from a 3-OL, 0-TE line, numbered 1–5 left to right.
+ * 1 and 5 sit behind the outer linemen. 3 sits on the snap.
+ * The halfway gaps, 2 and 4, are not used.
+ * Multiples of the live OL gap, not of the real row.
  */
-const FB_REFERENCE_GAPS = [-1, -0.5, 0, 0.5, 1] as const;
+const FB_REFERENCE_GAPS = [-1, 0, 1] as const;
 /** Yards south of the LOS for a fullback on the deep slots. */
 const FB_SLOT_DEPTH = 3;
 /** Yards south of the LOS for the fourth fullback. He cannot take the middle slot. */
 const FB_UP_DEPTH = 1.5;
+/** Yards south of the LOS for a wide receiver on the line. */
+const WR_LINE_DEPTH = 0.5;
+/** Yards south of the LOS for a wide receiver off the line. */
+const WR_BACK_DEPTH = 1.5;
+/** TE+WR on one side of the snap may lead the other side by at most this many. */
+const RECEIVER_BALANCE = 4;
 
 type FullbackSeat = { gap: number; depth: number };
 
@@ -83,10 +91,11 @@ function pickGaps(pool: readonly number[], count: number, random: () => number):
   return slots.slice(0, n).sort((a, b) => a - b);
 }
 
-/** One depth for this snap. A restage keeps it, so the fullbacks do not reshuffle under him. */
+/** Always 1.5 yards. The draw stays so a restage does not shift the fullback picks. */
 function quarterbackDepth(random: () => number): number {
   if (qbDepthMemo && qbDepthMemo.roll === fullbackRoll) return qbDepthMemo.depth;
-  const depth = unit(random) < 0.5 ? FB_UP_DEPTH : FB_SLOT_DEPTH;
+  unit(random);
+  const depth = FB_UP_DEPTH;
   qbDepthMemo = { roll: fullbackRoll, depth };
   return depth;
 }
@@ -239,6 +248,7 @@ function personnelFrom(partial: Partial<PersonnelCounts> | undefined): Personnel
     ol: countOf(mixed.ol),
     fb: countOf(mixed.fb),
     te: countOf(mixed.te),
+    wr: countOf(mixed.wr),
     qb: countOf(mixed.qb),
     hb: countOf(mixed.hb),
     dt: countOf(mixed.dt),
@@ -337,12 +347,12 @@ function dbSlots(snap: number, los: number, count: number, scheme: DefenseScheme
   return slots;
 }
 
-function alignFewDbs(players: Player[], dbRoles: Record<string, DbAlignRole>, los: number, width: number) {
+function alignFewDbs(players: Player[], dbRoles: Record<string, DbAlignRole>, los: number, width: number, snap: number) {
   const dbs = players.filter((player) => player.role === "DB").sort((a, b) => a.x - b.x);
   if (dbs.length === 1) {
     const only = dbs[0];
     if (!only) return;
-    only.x = width * 0.5;
+    only.x = snap;
     only.yard = los + 8;
     dbRoles[only.id] = "FS";
     return;
@@ -554,10 +564,159 @@ function tightEndSlots(ol: number, te: number, leftTe: number): number[] {
   return slots;
 }
 
+/** Leftmost or rightmost OL/TE. With none, the snap stands in for that edge. */
+function lineEdge(players: readonly Player[], side: -1 | 1, snap: number): number {
+  let edge: number | null = null;
+  for (const player of players) {
+    if (player.role !== "OL" && player.role !== "TE") continue;
+    if (edge === null || (side < 0 ? player.x < edge : player.x > edge)) edge = player.x;
+  }
+  return edge ?? snap;
+}
+
+/**
+ * Field X from one alignment spot outside `edge` out to that sideline.
+ * The spot width is the OL/TE gap. Empty when that segment misses this side of the snap.
+ */
+function wingSpan(
+  edge: number,
+  gap: number,
+  side: -1 | 1,
+  snap: number,
+  width: number,
+): { lo: number; hi: number } | null {
+  const sideline = side < 0 ? 0 : width;
+  const oneSpot = edge + side * gap;
+  let lo = Math.max(0, Math.min(oneSpot, sideline));
+  let hi = Math.min(width, Math.max(oneSpot, sideline));
+  if (side < 0) hi = Math.min(hi, snap - 1e-4);
+  else lo = Math.max(lo, snap + 1e-4);
+  if (!(lo <= hi)) return null;
+  return { lo, hi };
+}
+
+function eligibleSideCounts(players: readonly Player[], snap: number): { teL: number; teR: number } {
+  let teL = 0;
+  let teR = 0;
+  for (const player of players) {
+    if (player.role !== "TE") continue;
+    if (player.x < snap) teL += 1;
+    else if (player.x > snap) teR += 1;
+  }
+  return { teL, teR };
+}
+
+/** Left-side WR counts that keep TE+WR within `RECEIVER_BALANCE` and on an open wing. */
+function balancedWideLeft(teL: number, teR: number, wr: number, leftOpen: boolean, rightOpen: boolean): number[] {
+  const counts: number[] = [];
+  for (let wrL = 0; wrL <= wr; wrL++) {
+    const wrR = wr - wrL;
+    if ((wrL > 0 && !leftOpen) || (wrR > 0 && !rightOpen)) continue;
+    if (Math.abs(teL + wrL - (teR + wrR)) <= RECEIVER_BALANCE) counts.push(wrL);
+  }
+  return counts;
+}
+
+function chooseWideLeft(
+  teL: number,
+  teR: number,
+  wr: number,
+  leftOpen: boolean,
+  rightOpen: boolean,
+  random: () => number,
+): number {
+  const open = balancedWideLeft(teL, teR, wr, leftOpen, rightOpen);
+  const pool = open.length > 0 ? open : balancedWideLeft(teL, teR, wr, true, true);
+  if (pool.length > 0) {
+    return pool[Math.min(pool.length - 1, Math.floor(unit(random) * pool.length))] ?? 0;
+  }
+  let bestScore = Infinity;
+  const tied: number[] = [];
+  for (let wrL = 0; wrL <= wr; wrL++) {
+    const wrR = wr - wrL;
+    let score = Math.abs(teL + wrL - (teR + wrR));
+    if (wrL > 0 && !leftOpen) score += 100;
+    if (wrR > 0 && !rightOpen) score += 100;
+    if (score < bestScore) {
+      bestScore = score;
+      tied.length = 0;
+      tied.push(wrL);
+    } else if (score === bestScore) tied.push(wrL);
+  }
+  return tied[Math.min(tied.length - 1, Math.floor(unit(random) * tied.length))] ?? 0;
+}
+
+/** Keep sampled X inside the wing and at least one alignment spot apart when it fits. */
+function spreadInSpan(raw: readonly number[], lo: number, hi: number, gap: number): number[] {
+  const xs = raw.map((x) => clamp(x, lo, hi)).sort((a, b) => a - b);
+  if (xs.length <= 1) return xs;
+  const room = (hi - lo) / (xs.length - 1);
+  const minGap = Math.min(Math.max(gap, 0), Math.max(0, room));
+  if (!(minGap > 0)) return xs;
+  for (let i = 1; i < xs.length; i++) {
+    const prev = xs[i - 1]!;
+    if (xs[i]! < prev + minGap) xs[i] = prev + minGap;
+  }
+  const overflow = xs[xs.length - 1]! - hi;
+  if (overflow > 0) {
+    for (let i = 0; i < xs.length; i++) xs[i] = xs[i]! - overflow;
+  }
+  for (let i = 0; i < xs.length; i++) xs[i] = clamp(xs[i]!, lo, hi);
+  return xs;
+}
+
+function sampleWing(
+  span: { lo: number; hi: number } | null,
+  count: number,
+  gap: number,
+  side: -1 | 1,
+  width: number,
+  random: () => number,
+): number[] {
+  if (count <= 0) return [];
+  const fallback = side < 0 ? 0 : width;
+  const lo = span?.lo ?? fallback;
+  const hi = span?.hi ?? fallback;
+  const raw: number[] = [];
+  for (let i = 0; i < count; i++) raw.push(lo + (hi - lo) * unit(random));
+  return spreadInSpan(raw, lo, hi, gap);
+}
+
+/**
+ * Wide receivers, after the OL/TE row is final.
+ * Each one is 0.5 or 1.5 yards behind the LOS, from one spot outside the
+ * outer OL/TE to the sideline. TE+WR left of the snap stays within 4 of the right.
+ * Draws start after the fullback roll so that roll does not move.
+ */
+function placeWideReceivers(
+  players: Player[],
+  snap: number,
+  los: number,
+  width: number,
+  count: number,
+  gap: number,
+  random: () => number,
+) {
+  if (count <= 0 || !(gap > 0)) return;
+  const leftSpan = wingSpan(lineEdge(players, -1, snap), gap, -1, snap, width);
+  const rightSpan = wingSpan(lineEdge(players, 1, snap), gap, 1, snap, width);
+  const { teL, teR } = eligibleSideCounts(players, snap);
+  const wrL = chooseWideLeft(teL, teR, count, leftSpan != null, rightSpan != null, random);
+  const xs = [
+    ...sampleWing(leftSpan, wrL, gap, -1, width, random),
+    ...sampleWing(rightSpan, count - wrL, gap, 1, width, random),
+  ];
+  for (let i = 0; i < count; i++) {
+    const x = xs[i] ?? snap;
+    const yard = unit(random) < 0.5 ? los - WR_LINE_DEPTH : los - WR_BACK_DEPTH;
+    players.push(makePlayer(`wr-${i}`, "off", "WR", x, yard, false));
+  }
+}
+
 /**
  * Full presnap roster for one called play.
  * The first HB is the carrier and the only controlled player.
- * Every quarterback stands on the snap, 1.5 or 3 yards off the ball.
+ * Every quarterback stands on the snap, 1.5 yards off the ball.
  */
 export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
   const width = Number.isFinite(call.width) && (call.width ?? 0) > 0 ? (call.width as number) : FIELD.width;
@@ -649,16 +808,38 @@ export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
   const lbDepth = Math.min((2.25 + ((lbAuthored - 3.6) / 3.2) * 2.5) * depthScale, room * 0.42);
   const lbCeiling = Math.min(cap, los + 5);
   const lbFloor = Math.min(los + 2, lbCeiling);
+  // One linebacker stands on the snap.
   // Two linebackers split by the hash gap and center on the snap.
-  // A centered snap puts one on each hash. Other counts stay on the cluster.
+  // A centered snap puts one on each hash.
+  // Three keep that center. The outer pair is 1.5× the two-linebacker split.
+  // Four keep that center. The outer pair is 2× the two-linebacker split.
+  // Wider counts stay on the cluster.
+  const hashGap = hashHalf(width);
   for (let i = 0; i < personnel.lb; i++) {
+    // Drawn for every count so a one-, two-, three-, or four-linebacker row does not shift the depth roll.
     const lateralJitter = (unit(random) - 0.5) * 1.3;
-    const hashGap = hashHalf(width);
     const x =
-      personnel.lb === 2
-        ? snap + (i === 0 ? -hashGap : hashGap)
-        : clusterX(i, personnel.lb, call.scheme.cluster, clusterMid, width) + lateralJitter;
-    const yard = clamp(los + lbDepth + (unit(random) - 0.5) * 0.4, lbFloor, lbCeiling);
+      personnel.lb === 1
+        ? snap
+        : personnel.lb === 2
+          ? snap + (i === 0 ? -hashGap : hashGap)
+          : personnel.lb === 3
+            ? snap + (i - 1) * hashGap * 1.5
+            : personnel.lb === 4
+              ? snap + (i - 1.5) * ((hashGap * 4) / 3)
+              : clusterX(i, personnel.lb, call.scheme.cluster, clusterMid, width) + lateralJitter;
+    // Drawn for every count so the fixed linebacker depths do not shift the other rolls.
+    const depthJitter = (unit(random) - 0.5) * 0.4;
+    // Three linebackers: the outer pair stands 3 yards off the line. The middle keeps the authored depth.
+    // Four linebackers: the outer pair stands 3 yards off the line. The inner pair stands together at 4.
+    const outerFour = personnel.lb === 4 && (i === 0 || i === personnel.lb - 1);
+    const innerFour = personnel.lb === 4 && !outerFour;
+    const outerThree = personnel.lb === 3 && (i === 0 || i === personnel.lb - 1);
+    const yard = clamp(
+      los + (outerFour || outerThree ? 3 : innerFour ? 4 : lbDepth + depthJitter),
+      lbFloor,
+      lbCeiling,
+    );
     players.push(makePlayer(`lb-${i}`, "def", "LB", x, yard, false));
   }
 
@@ -669,7 +850,7 @@ export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
     if (!slot) continue;
     const jitterX = personnel.db <= 2 ? 0 : (unit(random) - 0.5) * 0.45;
     const jitterY = personnel.db <= 2 ? 0 : (unit(random) - 0.5) * 0.25;
-    const x = personnel.db === 1 ? width * 0.5 : slot.x + jitterX;
+    const x = personnel.db === 1 ? snap : slot.x + jitterX;
     const yard = clamp(slot.yard + jitterY, los + 1.15, cap);
     const id = `db-${i}`;
     players.push(makePlayer(id, "def", "DB", x, yard, false));
@@ -688,7 +869,7 @@ export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
   anchorOffensiveLine(players, snap);
   repackEvenTightEnds(players, snap, personnel.te, call.random ?? Math.random);
   // Slots are the 3-OL reference, scaled by this snap's gap.
-  // A quarterback at 3 yards owns the center slot, so no fullback stands there.
+  // A quarterback at 3 yards would own the center slot. Depth is 1.5, so he does not.
   let blockCenter = false;
   if (quarterbacks.length > 0) {
     const depth = quarterbackDepth(() => fbUnit(call.random));
@@ -708,6 +889,9 @@ export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
     });
   }
 
+  // After the line's side roll, the anchor, the tight-end repack, and the fullback draws.
+  placeWideReceivers(players, snap, los, width, personnel.wr, olGap, call.random ?? Math.random);
+
   if (call.defenseFlipped) {
     const mid = width * 0.5;
     for (const player of players) {
@@ -715,7 +899,7 @@ export function placeEntitiesForNewPlay(call: PlacementCall): PlaySetup {
     }
   }
 
-  alignFewDbs(players, dbRoles, los, width);
+  alignFewDbs(players, dbRoles, los, width, snap);
   clampDbWings(players, width, wide);
   pinOffense(players, los);
 

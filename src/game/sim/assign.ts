@@ -144,7 +144,7 @@ export type ReplaySample = {
 };
 
 export type ReplayFrame = {
-  /** `AssignedPlay.age` when the sample was taken. */
+  /** `AssignedPlay.age` when the sample was taken. Opening samples sit at or below 0. */
   age: number;
   pose: string;
   /** Football at this sample. The scrub lock can sit on it, apart from any player. */
@@ -153,12 +153,18 @@ export type ReplayFrame = {
   /** User role when the sample was taken. Kits stay with that play. */
   side?: "off" | "def";
   players: ReplaySample[];
+  /** Pre-snap lineup, including the 2-point and 3-point stances. The horizon does not drop these. */
+  opening?: boolean;
 };
 
 export type ReplayTape = {
   frames: ReplayFrame[];
   /** Seconds since the last stored sample. */
   since: number;
+  /** Pre-snap clock. Opening ages are shifted so the snap sample lands on 0. */
+  prelude: number;
+  /** The snap sample is stored. Later samples are the live play. */
+  sealed: boolean;
 };
 
 function hashSeed(text: string): number {
@@ -1683,6 +1689,6 @@ export function attachAssignments(
     snapX: setup.snapX,
     age: 0,
     snapped: false,
-    replay: { frames: [], since: 0 },
+    replay: { frames: [], since: 0, prelude: 0, sealed: false },
   };
 }

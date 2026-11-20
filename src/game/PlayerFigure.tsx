@@ -705,10 +705,6 @@ function HelmetLogoPlane({
         alphaTest={0.05}
         toneMapped={false}
         depthWrite={false}
-        side={DoubleSide}
-        polygonOffset
-        polygonOffsetFactor={-8}
-        polygonOffsetUnits={-8}
       />
     </mesh>
   );

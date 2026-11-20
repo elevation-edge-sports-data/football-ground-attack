@@ -17,7 +17,14 @@ Not affiliated with, endorsed by, or licensed by any league or team.
 - Live page is the 3D field. `npm run build` packs it into `index.html`.
 - Canvas v10 is `archive/v10/`. The archive list on the live page runs v0–v10, with v11 current.
 - GitHub: https://github.com/elevation-edge-sports-data/football-ground-attack
-- Two linebackers line up a hash-gap apart, centered on the snap. Depth stays 2–5 yards.
+- One linebacker lines up on the snap. Two linebackers line up a hash-gap apart, centered on the snap. Three keep that center, with the outer pair 1.5× that gap and about 3 yards off the line. Four keep that center, with the outer pair 2× that gap and about 3 yards off the line. The inner pair stands together about 4 yards off the line. Other linebacker depth stays 2–5 yards.
+- One defensive back lines up on the snap. Three defensive backs span 3.3 times the distance between the hashes. Four keep those outside spots. Depth by count is unchanged.
+- Defensive backs are limited to 5.
+- Fullbacks use only slots 1, 3, and 5 and are limited to 3. The quarterback stands 1.5 yards off the line.
+- Offense personnel includes WR, 0–5, on the same 10-player cap as OL, TE, FB, and QB. Each wide receiver stands in a 2-point stance, anywhere from one spot outside the outer OL or TE to the sideline, either 0.5 or 1.5 yards behind the line of scrimmage. Tight ends plus wide receivers on one side of the snap stay within 4 of the other side.
+- The runner path trail keeps a constant screen thickness when the browser zooms the page.
+- The scoring HUD sits at the top left, just under the uniform banner.
+- Replay keeps the start of each play, including the pre-snap 2-point and 3-point stances. The length cap still drops later frames.
 
 ## v10.4
 
@@ -55,7 +62,7 @@ Not affiliated with, endorsed by, or licensed by any league or team.
 13. Volume player models with pose changes for dive, juke, spin, truck, stiff-arm, pancake, wrap, hit stick
 14. Stadium bowl: sectioned stands, crowd, press box (right sideline), lights, 3D goal posts, dual scoreboards, jumbotron. Touchdown lights the sky in team color
 15. Optional fumbles; celebrate (off on Classic); speed burst in the clear; TD camera zoom
-16. Personnel counts for OL, TE, FB, QB, DT, LB, DB. Interior defenders spread with field width; the two widest DBs stay on the wings
+16. Personnel counts for OL, TE, WR, FB, QB, DT, LB, DB. Interior defenders spread with field width; the two widest DBs stay on the wings
 17. Speed, offense, defense, break-block, and break-tackle sliders
 18. Variable field width; Natural Grass, Field Turf, or Astro Turf
 19. Uniform banner (8 kits). Matching kits are not allowed. Kits are unlabeled colors. User-controlled defenders get a team-color ring, same as the ball carrier

@@ -18,7 +18,7 @@ let revision = 0;
 let dirty = false;
 const listeners = new Set<() => void>();
 
-/** OL and DT crouch. Every other player stands in a 2-point. The runner is separate. */
+/** OL and DT crouch. WR and every other player stand in a 2-point. The runner is separate. */
 export function presnapStance(player: { role: string; controlled: boolean }): string | null {
   if (player.controlled) return null;
   if (THREE_POINT.has(player.role)) return STANCE_3;

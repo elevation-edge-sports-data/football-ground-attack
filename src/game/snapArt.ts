@@ -338,7 +338,9 @@ export function playDiagram(play: AssignedPlay, los: number, snapX: number): Pla
             ? "#fbbf24"
             : player.role === "TE"
               ? "#34d399"
-              : "#cbd5e1";
+              : player.role === "WR"
+                ? "#38bdf8"
+                : "#cbd5e1";
       return {
         team: "off" as const,
         x: player.x,

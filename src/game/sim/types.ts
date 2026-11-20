@@ -18,19 +18,20 @@
 import type { Input, Player, Team } from "../sim";
 
 /** Canvas personnel bucket. The 3D label "DL" is this group's "DT". */
-export type PersonnelGroup = "QB" | "HB" | "FB" | "TE" | "OL" | "DT" | "LB" | "DB";
+export type PersonnelGroup = "QB" | "HB" | "FB" | "TE" | "WR" | "OL" | "DT" | "LB" | "DB";
 
 /** DB alignment tag. The player's group stays "DB". */
 export type DbAlignRole = "CB" | "FS" | "SS" | "NCB" | "DIME" | "DB";
 
 /**
  * Counts that build a formation. The canvas defaults are OL 5, FB 1, TE 3,
- * QB 1, HB 1, DT 3, LB 2, DB 6. HB is always one.
+ * QB 1, HB 1, DT 3, LB 2, DB 5. WR defaults to 0. HB is always one.
  */
 export type PersonnelCounts = {
   ol: number;
   fb: number;
   te: number;
+  wr: number;
   qb: number;
   hb: number;
   dt: number;
@@ -42,11 +43,12 @@ export const DEFAULT_PERSONNEL: PersonnelCounts = {
   ol: 5,
   fb: 1,
   te: 3,
+  wr: 0,
   qb: 1,
   hb: 1,
   dt: 3,
   lb: 2,
-  db: 6,
+  db: 5,
 };
 
 /** Where a scheme clusters the linebackers across the formation. */

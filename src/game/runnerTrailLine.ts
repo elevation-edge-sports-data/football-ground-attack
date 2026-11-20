@@ -30,6 +30,8 @@ let painted = "";
 /**
  * Screen-pixel width matches `strokeTrailWorld` (lineWidth 2.6, round caps).
  * A world-unit Line thins out under the overview camera.
+ * Resolution is the drawing buffer, not the CSS viewport, so page zoom does not
+ * change the stroke.
  */
 export function createTrailLine(): Line2 {
   const material = new LineMaterial({
@@ -46,6 +48,11 @@ export function createTrailLine(): Line2 {
   // Set before the first bind so a one-segment opening frame cannot freeze the draw.
   geometry._maxInstanceCount = MAX_SEGMENTS;
   const line = new Line2(geometry, material);
+  // Line2's own callback stores the CSS viewport, which scales with page zoom.
+  // Write the drawing buffer instead so linewidth 2.6 stays a device-pixel stroke.
+  line.onBeforeRender = (renderer) => {
+    material.resolution.set(renderer.domElement.width, renderer.domElement.height);
+  };
   line.visible = false;
   line.frustumCulled = false;
   // Transparent pass: above the midfield logo (renderOrder 4), under play art (6).

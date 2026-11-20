@@ -32,7 +32,7 @@ import type { BlockAssignment, ContactResult, DefenseAssignment, PlayAssignment,
 const ROUTE_LEAVE = 0.15;
 /** One replay sample. About 12 samples a second. */
 const REPLAY_SAMPLE = 0.08;
-/** How much of the play the scrub can still see. */
+/** How much of the play, after the opening stances, the scrub can still see. */
 const REPLAY_HORIZON = 10;
 
 const ROLE_SPEED: Record<string, number> = {
@@ -158,6 +158,8 @@ function boxBreath(age: number): number {
 }
 
 function aimFor(player: AssignedPlayer, players: readonly Player[], carrier: Player, los: number, age: number, style: "storm" | "base" | "standard") {
+  // Wide receivers keep the pre-snap spot. They are not blockers, and pursue would run them at the ball.
+  if (player.role === "WR") return { x: player.x, yard: player.yard };
   const assignment = player.assignment;
   if (isBlock(assignment)) return blockAim(assignment, player, players, carrier, los);
   if (isDefense(assignment)) {
@@ -411,11 +413,11 @@ function stepUserAfterWhistle(
   return input;
 }
 
-function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
+function pushReplayFrame(sim: Sim, assigned: AssignedPlay, opening = false) {
   const tape = assigned.replay;
   if (!tape) return;
   tape.frames.push({
-    age: assigned.age,
+    age: opening ? tape.prelude : assigned.age,
     pose: sim.pose,
     ballX: sim.ballX,
     ballYard: sim.ballYard,
@@ -429,11 +431,59 @@ function pushReplayFrame(sim: Sim, assigned: AssignedPlay) {
       facingYard: player.facingYard,
       pose: poseForReplay(player, sim.pose),
     })),
+    ...(opening ? { opening: true } : {}),
   });
-  const newest = tape.frames[tape.frames.length - 1];
-  while (tape.frames.length > 2 && newest && tape.frames[0] && newest.age - tape.frames[0].age > REPLAY_HORIZON) {
-    tape.frames.shift();
+  // The 10s window trims the live play only. Lineup stances stay at the front.
+  const frames = tape.frames;
+  const newest = frames[frames.length - 1];
+  while (frames.length > 2 && newest) {
+    let drop = -1;
+    for (let i = 0; i < frames.length - 1; i++) {
+      const frame = frames[i];
+      if (!frame || frame.opening) continue;
+      if (newest.age - frame.age > REPLAY_HORIZON) drop = i;
+      break;
+    }
+    if (drop < 0) break;
+    frames.splice(drop, 1);
   }
+}
+
+/**
+ * Sample the armed formation. Ages count up on `prelude` and are shifted
+ * onto the snap when `sealOpeningReplay` runs, so the scrub starts in the stances.
+ */
+export function noteOpeningReplay(sim: Sim, assigned: AssignedPlay, dt: number) {
+  const tape = assigned.replay;
+  if (!tape || tape.sealed) return;
+  const step = dt > 0 ? Math.min(dt, 0.05) : 0;
+  tape.since += step;
+  const due = tape.frames.length === 0 || tape.since >= REPLAY_SAMPLE;
+  if (!due) return;
+  const consumed = tape.since >= REPLAY_SAMPLE ? REPLAY_SAMPLE : tape.since;
+  if (tape.since >= REPLAY_SAMPLE) tape.since -= REPLAY_SAMPLE;
+  else tape.since = 0;
+  tape.prelude += consumed;
+  pushReplayFrame(sim, assigned, true);
+}
+
+/** Stamp the lineup, then put that frame at age 0. Later samples use the live clock. */
+export function sealOpeningReplay(sim: Sim, assigned: AssignedPlay) {
+  const tape = assigned.replay;
+  if (!tape || tape.sealed) return;
+  // A snap with no elapsed time still needs its own sample, or it shares an age
+  // with the armed frame and the scrub never lands on it.
+  const gap = Math.max(0, tape.since);
+  tape.prelude += gap > 0 || tape.frames.length === 0 ? gap : 1e-3;
+  tape.since = 0;
+  pushReplayFrame(sim, assigned, true);
+  const end = tape.prelude;
+  if (end !== 0) {
+    for (const frame of tape.frames) {
+      if (frame.opening) frame.age -= end;
+    }
+  }
+  tape.sealed = true;
 }
 
 /** Sample the roster after the carrier step. A tackle frame is kept even if it is early. */
@@ -538,6 +588,9 @@ export function stepAssignments(
   // pose clock, and stance release wait until the user snaps.
   // After the whistle only the user keeps moving. Everyone else stays put until the lineup.
   if (!assigned.snapped) return input;
+  // The view seals this before the snap releases a stance. This catches a step
+  // that arrives first, while the bodies are still in the lineup.
+  if (!assigned.replay.sealed) sealOpeningReplay(sim, assigned);
   if (sim.playOver) return stepUserAfterWhistle(sim, assigned, input, dt);
   const wasOver = sim.playOver;
   const bounded = dt > 0 ? Math.min(dt, 0.05) : 0;

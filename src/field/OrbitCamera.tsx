@@ -5,9 +5,11 @@ import { MOUSE, TOUCH, Vector3, type PerspectiveCamera } from "three";
 import { followTarget } from "../game/cameraFollow";
 import {
   chaseForward,
+  consumeFreeCamHalfTurns,
   eyeFromOrbit,
   FREESTYLE_FOV,
   freeCam,
+  orbitFromOffset,
   orbitPitchCommand,
   orbitYawCommand,
   placeScripted,
@@ -172,6 +174,9 @@ function setFov(camera: PerspectiveCamera, fov: number) {
 /**
  * `useSaved` keeps the last freestyle orbit. Otherwise the current eye is stored
  * so a pause orbit starts from the picture already on screen.
+ * A quarter flip adds PI to that saved yaw, and seating from it already faces
+ * the new way. Seeding from the picture on screen copies a classic view that
+ * has already turned. Either way the pending half-turn is spent.
  */
 function seatFreestyle(camera: PerspectiveCamera, orbit: OrbitControls, useSaved: boolean) {
   camera.up.set(0, 1, 0);
@@ -183,6 +188,7 @@ function seatFreestyle(camera: PerspectiveCamera, orbit: OrbitControls, useSaved
       camera.position.z - followTarget.z,
     );
   }
+  consumeFreeCamHalfTurns();
   const eye = eyeFromOrbit(followTarget, freeCam);
   camera.position.set(eye.x, eye.y, eye.z);
   camera.lookAt(followTarget.x, followTarget.y, followTarget.z);
@@ -213,6 +219,27 @@ function dollyWheel(orbit: OrbitControls, deltaY: number) {
   else orbit.dollyOut(scale);
 }
 
+/**
+ * Q1→Q2 and Q3→Q4. Theta 0 is +Z, so half a turn negates the XZ offset
+ * (`eyeFromOrbit` with theta + PI). Phi, radius, and a panned target stay.
+ */
+function applyPendingFreeYaw(camera: PerspectiveCamera, orbit: OrbitControls) {
+  const turns = consumeFreeCamHalfTurns();
+  if (turns % 2 === 0) return;
+  const dx = camera.position.x - orbit.target.x;
+  const dy = camera.position.y - orbit.target.y;
+  const dz = camera.position.z - orbit.target.z;
+  const live = orbitFromOffset(dx, dy, dz);
+  const eye = eyeFromOrbit(
+    { x: orbit.target.x, y: orbit.target.y, z: orbit.target.z },
+    { theta: live.theta + Math.PI, phi: live.phi, radius: live.radius },
+  );
+  camera.position.set(eye.x, eye.y, eye.z);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(orbit.target.x, orbit.target.y, orbit.target.z);
+  orbit.update();
+}
+
 function driveFreestyle(
   camera: PerspectiveCamera,
   orbit: OrbitControls,
@@ -222,6 +249,7 @@ function driveFreestyle(
   followed: { x: number; y: number; z: number },
 ) {
   camera.up.set(0, 1, 0);
+  applyPendingFreeYaw(camera, orbit);
   orbit.enabled = true;
   orbit.enablePan = true;
   orbit.enableRotate = !practiceSpotAiming();
@@ -428,6 +456,7 @@ function driveTapeCamera(
     applied.current = "freestyle";
   }
   camera.up.set(0, 1, 0);
+  applyPendingFreeYaw(camera, orbit);
   orbit.enabled = true;
   orbit.enablePan = true;
   orbit.enableRotate = !practiceSpotAiming();
@@ -705,6 +734,8 @@ export function CameraRig() {
       const moved = Math.hypot(cam.position.x - eye.x, cam.position.y - eye.y, cam.position.z - eye.z) > 0.35;
       if (moved) {
         writeFreeCam(cam.position.x - orbit.target.x, cam.position.y - orbit.target.y, cam.position.z - orbit.target.z);
+        // The picture just captured is already the turned classic view.
+        consumeFreeCamHalfTurns();
         followed.current.x = followTarget.x;
         followed.current.y = followTarget.y;
         followed.current.z = followTarget.z;
@@ -741,6 +772,8 @@ export function CameraRig() {
       if (seat) orbit.update();
       const ownCamera = () => {
         writeFreeCam(cam.position.x - orbit.target.x, cam.position.y - orbit.target.y, cam.position.z - orbit.target.z);
+        // The picture just captured is already the turned classic view.
+        consumeFreeCamHalfTurns();
         followed.current.x = followTarget.x;
         followed.current.y = followTarget.y;
         followed.current.z = followTarget.z;

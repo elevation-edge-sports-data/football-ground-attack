@@ -1,8 +1,8 @@
 /**
  * Personnel counts for the next snap.
  *
- * OL 0–10, TE 0–4, FB 0–4, QB 0–1. Their total stays at or under 10.
- * DT 0–7, LB 0–6, DB 0–7. Their total stays at or under 11.
+ * OL 0–10, TE 0–4, WR 0–5, FB 0–3, QB 0–1. Their total stays at or under 10.
+ * DT 0–7, LB 0–6, DB 0–5. Their total stays at or under 11.
  * HB stays at 1; the canvas has no HB control.
  * A change during the pre-snap lineup rebuilds that snap.
  * A change after the snap waits for the following one.
@@ -11,20 +11,21 @@ import { readPrefs, writePrefs } from "../prefs";
 import { restageArmedSnap } from "./boot";
 import { DEFAULT_PERSONNEL, type PersonnelCounts } from "./types";
 
-export type PersonnelKey = "ol" | "te" | "fb" | "qb" | "dt" | "lb" | "db";
+export type PersonnelKey = "ol" | "te" | "wr" | "fb" | "qb" | "dt" | "lb" | "db";
 
 /**
  * Inclusive limits. QB stays 0–1. HB stays 1 and is not on a stepper.
- * Offense OL+TE+FB+QB cannot pass 10. Defense DT+LB+DB cannot pass 11.
+ * Offense OL+TE+WR+FB+QB cannot pass 10. Defense DT+LB+DB cannot pass 11.
  */
 export const PERSONNEL_LIMITS: Record<PersonnelKey, { min: number; max: number }> = {
   ol: { min: 0, max: 10 },
   te: { min: 0, max: 4 },
-  fb: { min: 0, max: 4 },
+  wr: { min: 0, max: 5 },
+  fb: { min: 0, max: 3 },
   qb: { min: 0, max: 1 },
   dt: { min: 0, max: 7 },
   lb: { min: 0, max: 6 },
-  db: { min: 0, max: 7 },
+  db: { min: 0, max: 5 },
 };
 
 const OFFENSE_CAP = 10;
@@ -33,6 +34,7 @@ const DEFENSE_CAP = 11;
 export const PERSONNEL_LABEL: Record<PersonnelKey, string> = {
   ol: "OL",
   te: "TE",
+  wr: "WR",
   fb: "FB",
   qb: "QB",
   dt: "DT",
@@ -40,8 +42,8 @@ export const PERSONNEL_LABEL: Record<PersonnelKey, string> = {
   db: "DB",
 };
 
-/** v10 offense panel order. */
-export const OFFENSE_PERSONNEL = ["ol", "te", "fb", "qb"] as const satisfies readonly PersonnelKey[];
+/** Offense panel order. WR shares the 10-player cap with OL, TE, FB, and QB. */
+export const OFFENSE_PERSONNEL = ["ol", "te", "wr", "fb", "qb"] as const satisfies readonly PersonnelKey[];
 /** v10 defense panel order. */
 export const DEFENSE_PERSONNEL = ["dt", "lb", "db"] as const satisfies readonly PersonnelKey[];
 
@@ -121,6 +123,7 @@ export function stepPersonnel(key: PersonnelKey, delta: -1 | 1) {
     personnel: {
       ol: counts.ol,
       te: counts.te,
+      wr: counts.wr,
       fb: counts.fb,
       qb: counts.qb,
       dt: counts.dt,

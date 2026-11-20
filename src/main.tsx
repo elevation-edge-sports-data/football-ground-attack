@@ -144,22 +144,22 @@ function App() {
         <div
           style={{
             position: "absolute",
-            top: 16,
-            left: "50%",
-            transform: "translateX(-50%)",
+            // Banner is top 12 and about 61px tall. Same left edge, just underneath.
+            top: 82,
+            left: 12,
             padding: "8px 18px",
             background: "rgba(12, 18, 28, 0.88)",
             color: "#f4f7fb",
             fontFamily: '"Barlow Condensed", sans-serif',
             fontSize: 22,
             letterSpacing: "0.04em",
-            textAlign: "center",
+            textAlign: "left",
             // The whole panel takes the pointer, same as the uniform banner and
             // the personnel buttons. Wheel here is page zoom, not the scene.
             pointerEvents: "auto",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+          <div style={{ display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
             {practice ? null : <span>{board.downText}</span>}
             <BallOnReadout
               yard={board.ballOn}

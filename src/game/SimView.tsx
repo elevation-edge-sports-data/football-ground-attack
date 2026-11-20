@@ -17,11 +17,13 @@ import { versionArchiveMenuOpen } from "./VersionArchive";
 import { poseCarriesBall } from "./PoseEditor";
 import {
   aimTapeSelection,
+  beginTapePlay,
   cycleTapeSelect,
   endTapeNudge,
   noteTape,
   pickTapeBody,
   readTapeLocked,
+  snapTapeOpening,
   readTapeOn,
   readTapePlaying,
   readTapeSelected,
@@ -49,7 +51,7 @@ import { createRunnerTrail, pinRunnerTrail, resetRunnerTrail, sampleRunnerTrail,
 import { bindReplaySeek, clearReplayScrub, publishReplayScrub, shownReplaySample } from "./replayScrub";
 import { bindReplayToggle, clearReplayHeldRate, publishReplayTransport, readReplayHeldRate } from "./replayHold";
 import { replayFocus, replayFocusJump } from "./replayCamera";
-import { sampleReplay, stepAssignments } from "./sim/advance";
+import { noteOpeningReplay, sampleReplay, sealOpeningReplay, stepAssignments } from "./sim/advance";
 import { stanceOf, stanceRevision, subscribeStances } from "./sim/stance";
 import { onFieldWidth, randomizeFieldForNewGame, subscribeFieldLook } from "./fieldLook";
 import { bootFullPlay, clockExpired, confirmPracticeRespot, gameEnded, markPlayOver, markSnap, movePracticeAim, onModeStage, onNextPlay, onReplayToggle, onReset, onRestart, practiceSpotAiming, previewRequested, readFirstDownYard, readMode, readPaused, readPendingFirstDownYard, readPendingLos, readPlaySide, readPractice, readProfile, seriesEnded, setPaused, setReplayFootage, setReplayMode, startNextPlay, takeStage, tickClock, toggleProfile } from "./sim/boot";
@@ -65,6 +67,7 @@ const JERSEY: Record<string, number[]> = {
   HB: [28],
   FB: [44],
   TE: [80, 81, 84, 85, 86, 87, 88],
+  WR: [11, 15, 16, 17, 18],
   OL: [60, 61, 63, 65, 70, 72, 74, 76],
   DT: [90, 92, 95, 97, 98],
   LB: [54, 55, 56, 58],
@@ -399,7 +402,10 @@ function PlayerMesh({
  */
 function openSession(): { preview: boolean; sim: Sim; assigned: AssignedPlay | null } {
   if (previewRequested()) return { preview: true, sim: createSim(), assigned: null };
+  beginTapePlay();
   const next = bootFullPlay();
+  snapTapeOpening(next.sim);
+  noteOpeningReplay(next.sim, next.assigned, 0);
   return { preview: false, sim: next.sim, assigned: next.assigned };
 }
 
@@ -445,6 +451,11 @@ export function SimView() {
   const [defRev, setDefRev] = useState(0);
   const trail = useRef(createRunnerTrail());
   const trailLine = useMemo(() => createTrailLine(), []);
+  // Same source as the yard lines and end-zone edges: drawing-buffer pixels.
+  // A CSS viewport size would thicken the stroke when the page zooms.
+  useFrame(({ gl }) => {
+    trailLine.material.resolution.set(gl.domElement.width, gl.domElement.height);
+  });
   const artState = useRef({
     model: session.assigned ? buildSnapArt(session.assigned, session.sim.los) : null,
     token: 1,
@@ -477,6 +488,9 @@ export function SimView() {
     state.players = next.assigned.players;
     state.playOver = false;
     assigned.current = next.assigned;
+    beginTapePlay();
+    snapTapeOpening(state);
+    noteOpeningReplay(state, next.assigned, 0);
     artState.current = { model: buildSnapArt(next.assigned, state.los), token: artState.current.token + 1 };
     artAge.current = 0;
     poseShown.current = state.pose;
@@ -1034,6 +1048,8 @@ export function SimView() {
         // The button state is still passed through so the next press is a real edge.
         hold.blockSnap = snapLatch.current || resumeOnA || practiceSpotAiming() || spotConfirmed;
         if (tickDefenseHuddle(play.players, hold, Math.min(Math.max(dt, 0), 0.05), state.los) === "snap") {
+          sealOpeningReplay(state, play);
+          snapTapeOpening(state);
           play.snapped = true;
           beginDefenseLive(play.players);
           poseShown.current = state.pose;
@@ -1046,11 +1062,26 @@ export function SimView() {
       if (snapLatch.current) {
         if (!confirmDown) snapLatch.current = false;
       } else if (!resumeOnA && (keys.current.has("Enter") || keys.current.has("NumpadEnter") || padAEdge)) {
+        sealOpeningReplay(state, play);
+        snapTapeOpening(state);
         play.snapped = true;
         poseShown.current = state.pose;
         setCarrierPose(state.pose);
         markSnap();
       }
+    }
+    if (
+      play &&
+      !preview.current &&
+      !play.snapped &&
+      !state.playOver &&
+      !replay.current.on &&
+      !readTapeOn() &&
+      !readPaused()
+    ) {
+      const openingDt = Math.min(Math.max(dt, 0), 0.05);
+      noteOpeningReplay(state, play, openingDt);
+      noteTape(openingDt, state, true);
     }
     const r3 = readRightStickClick();
     const r3Edge = r3 && !r3Was.current;
