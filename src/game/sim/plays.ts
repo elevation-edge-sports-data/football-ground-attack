@@ -90,7 +90,8 @@ export const OFF_PLAYS: readonly OffensePlay[] = [
 
 /**
  * Depths and cluster match the six authored schemes in game.js.
- * Storm and Base stay as ids the sim can still recognize, but they are not in the playbook.
+ * Storm and Base are appended after those six, so the first six calls stay in order.
+ * Their landmarks come from `assignStorm` and `assignSpin`.
  */
 export const DEF_SCHEMES: readonly DefenseScheme[] = [
   { id: "cover4Quarters", name: "Quarters", depthLB: 5.5, depthDB: 12, cluster: "spread" },
@@ -99,6 +100,8 @@ export const DEF_SCHEMES: readonly DefenseScheme[] = [
   { id: "tight", name: "Bear", depthLB: 4.2, depthDB: 8, cluster: "middle" },
   { id: "wide", name: "Fire Zone", depthLB: 5.2, depthDB: 9.5, cluster: "wide" },
   { id: "goalLine", name: "Walk-Up", depthLB: 3.6, depthDB: 6.2, cluster: "middle" },
+  { id: "stormBlitz", name: "Storm", depthLB: 4.2, depthDB: 9.5, cluster: "middle" },
+  { id: "base", name: "Base", depthLB: 5, depthDB: 9, cluster: "spread" },
 ];
 
 export const ROUTE_TEMPLATES: Record<RouteTemplateId, readonly RouteStep[]> = {

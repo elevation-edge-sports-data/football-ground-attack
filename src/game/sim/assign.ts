@@ -543,6 +543,7 @@ function assignBlockJobs(ctx: FieldCtx, style: string) {
       blocker.mode = "pull";
       blocker.pullPhase = 0;
       blocker.driveSide = playSide;
+      // archive/v10/game.js 2909. Farther from the hinge, a little more pull speed.
       blocker.pullBoost = 1.05 + Math.min(0.22, rank * 0.05);
       blocker.pullVia = { x: midX, y: Math.min(los - 0.3, midY), x2: endX, y2: endY };
       blocker.target = take(endX + playSide * 0.8, 20);
@@ -628,6 +629,7 @@ function assignBlockJobs(ctx: FieldCtx, style: string) {
       }
       blocker.mode = "pull";
       blocker.pullPhase = 0;
+      // archive/v10/game.js 3008 then 3014. The second rank value is the one that sticks.
       blocker.pullBoost = 1.08 + rank * 0.08;
       const midX = snap + (left ? -1 : 1) * (2.8 + rank * 0.55);
       const midY = los - (1.1 + rank * 0.65);
@@ -1388,6 +1390,236 @@ function assignWalkUp(ctx: FieldCtx) {
   laneOffsets(defs, 1.5);
 }
 
+/**
+ * Storm Blitz landmarks. archive/v10/game.js `assignStormBlitzJobs` 3383–3528.
+ * Front rushes angle right, outside contains arc, one cross blitz, then flats and a deep middle.
+ * Bodies stay where placement put them. `limitDtPenetration` still shades every tackle but one.
+ */
+function assignStorm(ctx: FieldCtx) {
+  const { defs, fl, fr, mid, los, rnd } = ctx;
+  const width = fr - fl;
+  const used = new Set<DefDraft>();
+  const dts = roleSorted(defs, "DT");
+  const lbs = roleSorted(defs, "LB");
+  const dbs = roleSorted(defs, "DB");
+  const blitz = (
+    defender: DefDraft,
+    jobX: number,
+    jobY: number,
+    curve: boolean,
+    stutter: boolean,
+    stutterX?: number,
+    stutterY?: number,
+  ) => {
+    defender.job = "blitz";
+    defender.jobX = clamp(jobX, fl + 2.5, fr - 2.5);
+    defender.jobY = jobY;
+    defender.zoneRx = 1.2;
+    defender.zoneRy = 1.2;
+    defender.zoneFollow = false;
+    defender.artCurve = curve;
+    defender.stutter = stutter;
+    if (stutter) {
+      defender.stutterX = clamp(stutterX ?? (defender.x + jobX) / 2, fl + 3, fr - 3);
+      defender.stutterY = stutterY ?? los + 1;
+    }
+    defender.readT = 0.08 + rnd() * 0.15;
+    defender.isSafety = false;
+    defender.isCorner = false;
+    defender.aggressor = true;
+    used.add(defender);
+  };
+  const zone = (defender: DefDraft, job: DefenseJob, x: number, y: number, rx: number, ry: number, follow: boolean) => {
+    defender.job = job;
+    defender.jobX = clamp(x, fl + 2.5, fr - 2.5);
+    defender.jobY = y;
+    defender.zoneRx = rx;
+    defender.zoneRy = ry;
+    defender.zoneFollow = follow || job === "drop" || job === "spy";
+    defender.artCurve = false;
+    defender.stutter = false;
+    defender.readT = job === "deep" ? 0.45 + rnd() * 0.3 : 0.22 + rnd() * 0.25;
+    defender.isSafety = job === "deep";
+    defender.isCorner = job === "flat" || job === "curl";
+    defender.aggressor = false;
+    used.add(defender);
+  };
+  const front = [...dts];
+  while (front.length < 4) {
+    const lb = lbs.find((defender) => !front.includes(defender) && !used.has(defender));
+    if (!lb) break;
+    front.push(lb);
+  }
+  front.slice(0, 4).forEach((defender, index) => {
+    blitz(defender, defender.x + width * (0.06 + index * 0.015), los - 0.25 - rnd() * 0.3, true, false);
+  });
+  const freeLbDb = [...lbs, ...dbs].filter((defender) => !used.has(defender)).sort((a, b) => a.x - b.x);
+  const leftContain = freeLbDb[0];
+  const rightContain = freeLbDb.length > 1 ? freeLbDb[freeLbDb.length - 1] : null;
+  if (leftContain) {
+    blitz(leftContain, fl + width * 0.12, los - 0.1, true, true, fl + width * 0.22, los + 1.6);
+    leftContain.job = "contain";
+    leftContain.zoneRx = 2.2;
+    leftContain.zoneRy = 2;
+  }
+  if (rightContain && rightContain !== leftContain) {
+    blitz(rightContain, fr - width * 0.12, los - 0.1, true, true, fr - width * 0.22, los + 1.6);
+    rightContain.job = "contain";
+    rightContain.zoneRx = 2.2;
+    rightContain.zoneRy = 2;
+  }
+  const gapX =
+    dts.length >= 4
+      ? (dts[2]!.x + dts[3]!.x) / 2
+      : dts.length >= 2
+        ? (dts[dts.length - 2]!.x + dts[dts.length - 1]!.x) / 2
+        : mid + width * 0.05;
+  const crossCands = [...lbs, ...dbs].filter((defender) => !used.has(defender)).sort((a, b) => a.x - b.x);
+  const cross = crossCands.find((defender) => defender.x >= mid - width * 0.15) ?? crossCands[0];
+  if (cross) blitz(cross, gapX, los - 0.35, true, true, cross.x - width * 0.04, los + 0.8);
+  const freeSaf = defs.filter((defender) => !used.has(defender) && defender.role === "DB").sort((a, b) => a.x - b.x);
+  const gapA = mid - width * 0.06;
+  const gapB = mid + width * 0.06;
+  const safe0 = freeSaf[0];
+  const safe1 = freeSaf[1];
+  if (safe0 && safe1) {
+    blitz(safe0, gapB, los - 0.3, true, true, mid, los + 1.2);
+    blitz(safe1, gapA, los - 0.3, true, true, mid, los + 1.2);
+  } else if (safe0) {
+    blitz(safe0, gapA, los - 0.3, true, true);
+  }
+  const cov = defs.filter((defender) => !used.has(defender)).sort((a, b) => a.x - b.x);
+  const leftCov = cov.find((defender) => defender.x <= mid);
+  const rightCov = cov.find((defender) => defender.x > mid);
+  if (leftCov) zone(leftCov, "flat", fl + width * 0.18, los + 4, width * 0.12, 1.6, false);
+  if (rightCov) zone(rightCov, "flat", fr - width * 0.18, los + 4, width * 0.12, 1.6, false);
+  const rest = defs.filter((defender) => !used.has(defender));
+  const deep = rest[0];
+  if (deep) zone(deep, "deep", mid, capY(ctx, los + 14), width * 0.2, 4.8, false);
+  rest.slice(1).forEach((defender) => {
+    const side = defender.x < mid ? -1 : 1;
+    zone(defender, "drop", mid + side * width * 0.1, los + 8, width * 0.1, 2.4, true);
+  });
+  laneOffsets(defs, 1.7);
+}
+
+/**
+ * Spin Cycle landmarks. archive/v10/game.js `assignSpinCycleJobs` 4073–4164.
+ * Quadrants and the CCW stutter are taken from the canvas ring. Bodies stay on the presnap look.
+ */
+function assignSpin(ctx: FieldCtx) {
+  const { defs, fl, fr, mid, los, rnd } = ctx;
+  const width = fr - fl;
+  const cx = mid;
+  const cy = los + 8;
+  const dts = roleSorted(defs, "DT");
+  const lbs = roleSorted(defs, "LB");
+  const dbs = roleSorted(defs, "DB");
+  const ring = (role: string, index: number, count: number) => {
+    const t = count <= 1 ? 0.5 : index / (count - 1);
+    if (role === "DT") {
+      return {
+        x: clamp(mid + (t - 0.5) * width * 0.28, fl + 4, fr - 4),
+        y: los + 3.1 + rnd() * 0.35,
+      };
+    }
+    if (role === "LB") {
+      return {
+        x: clamp(mid + (t - 0.5) * width * 0.42, fl + 4, fr - 4),
+        y: los + 5.2 + rnd() * 0.4,
+      };
+    }
+    return {
+      x: clamp(mid + (t - 0.5) * width * 0.62, fl + 3, fr - 3),
+      y: los + 9.5 + Math.abs(t - 0.5) * 2.2 + rnd() * 0.5,
+    };
+  };
+  const spot = new Map<DefDraft, { x: number; y: number }>();
+  dts.forEach((defender, index) => spot.set(defender, ring("DT", index, dts.length)));
+  lbs.forEach((defender, index) => spot.set(defender, ring("LB", index, lbs.length)));
+  dbs.forEach((defender, index) => spot.set(defender, ring("DB", index, dbs.length)));
+  const ordered = [...defs].sort((a, b) => {
+    const as = spot.get(a) ?? { x: a.x, y: a.y };
+    const bs = spot.get(b) ?? { x: b.x, y: b.y };
+    return Math.atan2(as.y - cy, as.x - cx) - Math.atan2(bs.y - cy, bs.x - cx);
+  });
+  const count = ordered.length;
+  ordered.forEach((defender, index) => {
+    const at = spot.get(defender) ?? { x: defender.x, y: defender.y };
+    const ang0 = Math.atan2(at.y - cy, at.x - cx);
+    const right = at.x >= cx;
+    const deep = at.y > cy + 1.5;
+    let job: DefenseJob;
+    let jobX: number;
+    let jobY: number;
+    let midAng: number;
+    if (!right && !deep) {
+      job = "blitz";
+      jobX = cx - width * 0.04;
+      jobY = los - 0.25;
+      midAng = ang0 + 0.7;
+    } else if (right && !deep) {
+      job = index % 2 === 0 ? "curl" : "flat";
+      jobX = cx + width * 0.22;
+      jobY = los + 6.5;
+      midAng = ang0 + 0.85;
+    } else if (right && deep) {
+      job = "blitz";
+      jobX = cx + width * 0.06;
+      jobY = los - 0.15;
+      midAng = ang0 + 0.95;
+    } else {
+      job = defender.role === "DB" ? "deep" : "drop";
+      jobX = cx - width * 0.18;
+      jobY = los + (job === "deep" ? 14 : 9);
+      midAng = ang0 + 0.65;
+    }
+    const rad0 = Math.hypot(at.x - cx, at.y - cy);
+    const midR = rad0 * 0.9;
+    defender.job = job;
+    defender.jobX = clamp(jobX, fl + 2.5, fr - 2.5);
+    defender.jobY = jobY;
+    defender.zoneRx = job === "deep" ? width * 0.16 : job === "blitz" ? 1.2 : width * 0.11;
+    defender.zoneRy = job === "deep" ? 4.5 : job === "blitz" ? 1.2 : 2;
+    defender.zoneFollow = job === "drop";
+    defender.aggressor = job === "blitz";
+    defender.artCurve = true;
+    defender.stutter = true;
+    defender.stutterX = clamp(cx + Math.cos(midAng) * midR, fl + 3, fr - 3);
+    defender.stutterY = cy + Math.sin(midAng) * midR * 0.55;
+    defender.readT = 0.12 + rnd() * 0.25;
+    defender.reactT = 0.2 + rnd() * 0.25;
+    defender.fakeBlitz = false;
+    defender.isSafety = job === "deep";
+    defender.isCorner = job === "flat" || job === "curl";
+    defender.blitzDelay = job === "blitz" ? 0.05 + rnd() * 0.2 : 0;
+    defender.laneOffset = (index - (count - 1) / 2) * 1.2;
+  });
+  const only = dbs.length === 1 ? dbs[0] : null;
+  if (only) {
+    only.jobX = cx;
+    only.job = "deep";
+    only.jobY = los + 14;
+    only.isSafety = true;
+    only.isCorner = false;
+    only.stutter = false;
+  }
+}
+
+/**
+ * One defender chases the wrong blocker for a couple of seconds.
+ * archive/v10/game.js 4482–4486. About 32% of snaps.
+ */
+function assignMisfire(ctx: FieldCtx) {
+  const { defs, blocks, rnd } = ctx;
+  if (rnd() >= 0.32 || !blocks.length || !defs.length) return;
+  const victim = defs[Math.floor(rnd() * defs.length)];
+  if (!victim) return;
+  victim.misfireT = 1.8 + rnd() * 1.4;
+  const blocker = blocks[Math.floor(rnd() * blocks.length)];
+  victim.misfireId = blocker?.id ?? null;
+}
+
 function assignDefenseJobs(ctx: FieldCtx, schemeId: string) {
   if (schemeId === "cover4Quarters") assignQuarters(ctx);
   else if (schemeId === "overloadBlitz") assignOverload(ctx);
@@ -1395,6 +1627,8 @@ function assignDefenseJobs(ctx: FieldCtx, schemeId: string) {
   else if (schemeId === "wide") assignFire(ctx);
   else if (schemeId === "tight") assignBear(ctx);
   else if (schemeId === "goalLine") assignWalkUp(ctx);
+  else if (schemeId === "stormBlitz") assignStorm(ctx);
+  else if (schemeId === "base") assignSpin(ctx);
 }
 
 function applyCellDefenseTweaks(
@@ -1492,6 +1726,86 @@ function applyCellDefenseTweaks(
       if (defender.job !== "deep") continue;
       defender.y = los + 9.6;
       defender.jobY = los + 10.5;
+    }
+  }
+}
+
+/**
+ * Minimum deep safeties, a pair of contains, and a small landmark separation.
+ * archive/v10/game.js 4466–4481 and 4500–4518.
+ * Rushes, spies, and authored contains stay put. This only fills a hole.
+ */
+function finishDefenseCoverage(ctx: FieldCtx) {
+  const { defs, fl, fr, mid, los } = ctx;
+  const width = fr - fl;
+  const countJob = (job: DefenseJob) => defs.filter((defender) => defender.job === job).length;
+  const dbs = roleSorted(defs, "DB");
+  const wantDeep = dbs.length >= 3 ? 2 : dbs.length >= 1 ? 1 : 0;
+  const open = dbs
+    .filter((defender) => defender.job !== "deep" && defender.job !== "robber" && defender.job !== "blitz" && defender.job !== "spy" && defender.job !== "contain")
+    .sort((a, b) => b.y - a.y);
+  open.forEach((defender, index) => {
+    if (countJob("deep") + countJob("robber") >= wantDeep) return;
+    const side = index % 2 === 0 ? -1 : 1;
+    const depth = countJob("deep") === 0 ? 13.5 : 18;
+    defender.job = "deep";
+    defender.jobX = clamp(mid + side * width * 0.14, fl + 3, fr - 3);
+    defender.jobY = capY(ctx, los + depth);
+    defender.zoneRx = 6.6;
+    defender.zoneRy = 5;
+    defender.zoneFollow = false;
+    defender.artCurve = false;
+    defender.stutter = false;
+    defender.isSafety = true;
+    defender.isCorner = false;
+  });
+  let corners = dbs.filter((defender) => defender.isCorner);
+  if (dbs.length > 2 && corners.length < 2) {
+    const left = dbs[0];
+    const right = dbs[dbs.length - 1];
+    if (left && !corners.includes(left)) corners = [...corners, left];
+    if (right && right !== left && !corners.includes(right)) corners = [...corners, right];
+  }
+  if (countJob("contain") < 2 && corners.length) {
+    const cands = corners
+      .filter((defender) => defender.job !== "contain" && defender.job !== "deep" && defender.job !== "blitz" && defender.job !== "spy")
+      .sort((a, b) => a.x - b.x);
+    const left = cands[0];
+    const right = cands[cands.length - 1];
+    const place = (defender: DefDraft, x: number) => {
+      defender.job = "contain";
+      defender.jobX = clamp(x, fl + 3, fr - 3);
+      defender.jobY = los + 5.2;
+      defender.zoneRx = 2.4;
+      defender.zoneRy = 2.8;
+      defender.zoneFollow = false;
+      defender.artCurve = false;
+      defender.stutter = false;
+      defender.isCorner = true;
+      defender.isSafety = false;
+    };
+    if (left) place(left, fl + width * 0.16);
+    if (right && right !== left) place(right, fr - width * 0.16);
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < defs.length; i++) {
+      for (let j = i + 1; j < defs.length; j++) {
+        const a = defs[i];
+        const b = defs[j];
+        if (!a || !b || a.jobX == null || b.jobX == null) continue;
+        const dx = b.jobX - a.jobX;
+        const dy = (b.jobY ?? 0) - (a.jobY ?? 0);
+        const dist = Math.hypot(dx, dy);
+        if (dist >= 2.15 || dist <= 0.01) continue;
+        const push = (2.15 - dist) * 0.52;
+        const ang = Math.atan2(dy, dx);
+        a.jobX = clamp(a.jobX - Math.cos(ang) * push, fl + 2.7, fr - 2.7);
+        b.jobX = clamp(b.jobX + Math.cos(ang) * push, fl + 2.7, fr - 2.7);
+        if (Math.abs(dy) < 0.8) {
+          a.jobY = (a.jobY ?? los) - 0.45;
+          b.jobY = (b.jobY ?? los) + 0.45;
+        }
+      }
     }
   }
 }
@@ -1661,11 +1975,17 @@ export function attachAssignments(
       defender.laneOffset = -defender.laneOffset;
     }
   }
-  applyCellDefenseTweaks(field, key, call.scheme.id, offenseFlipped, defenseFlipped, facing === "flipped");
   limitDtPenetration(field, call.scheme.id);
+  // After penetration, so a shaded tackle is not turned back into a rush.
+  // archive/v10/game.js applyCellDefenseTweaks 2573, then the coverage fill.
+  applyCellDefenseTweaks(field, key, call.scheme.id, offenseFlipped, defenseFlipped, facing === "flipped");
+  finishDefenseCoverage(field);
   assignBlockJobs(field, play.blockStyle);
   applyCellBlockTweaks(field, key, call.scheme.id, offenseFlipped, facing === "stock");
   sealBlocks(blocks, side);
+  // After the block roll, so this draw does not reshuffle landmarks or blocks.
+  // archive/v10/game.js 4482–4486.
+  assignMisfire(field);
 
   const assignments = new Map<string, PlayAssignment>();
   for (const defender of defs) assignments.set(defender.id, toDefense(defender, setup.snapX));

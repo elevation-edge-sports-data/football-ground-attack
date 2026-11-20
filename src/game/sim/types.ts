@@ -57,7 +57,8 @@ export type ClusterMode = "spread" | "left" | "right" | "middle" | "wide";
 /**
  * Authored defensive calls in `DEF_SCHEMES`.
  * Storm (`stormBlitz`) and Base (`base`) are in that list after the original six.
- * Their post-snap movement is a modifier in `advance.ts`, not a separate job table.
+ * Their job tables are `assignStorm` and `assignSpin` in `assign.ts`.
+ * Post-snap speed and key distance stay modifiers in `advance.ts`.
  */
 export type DefenseSchemeId =
   | "cover4Quarters"
@@ -268,8 +269,8 @@ export type BlockAssignment = {
   gapAimY: number | null;
   station: StationRole;
   /**
-   * The first block has shed or finished. The next claim is a linebacker,
-   * a deeper gap, or the climb point in `gapAim`.
+   * The first block has shed or finished. The next claim climbs to a
+   * linebacker or a deeper gap, unless a crease is open beside the runner.
    */
   secondLevel?: boolean;
 };

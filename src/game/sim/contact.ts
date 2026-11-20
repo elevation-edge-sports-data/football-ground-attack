@@ -9,6 +9,7 @@
  * This does not push for a stiff-arm. That shove stays inside `step`.
  */
 import type { Player } from "../sim";
+import { attackSign, downfieldDelta, readAttackNorth } from "./attack";
 import type { BlockAssignment, ContactResult } from "./types";
 import { readBreakBlock, readBreakTackle } from "./tuning";
 
@@ -31,6 +32,9 @@ export type BodyContact = {
   tackleTries: number;
   /** Latest result for this defender. Null before any overlap. */
   last: ContactResult | null;
+  /** Yards per second of a pancake or recover slide. Canvas `vx` / `vy`. */
+  slideX: number;
+  slideY: number;
 };
 
 const clocks = new WeakMap<Player, BodyContact>();
@@ -67,6 +71,8 @@ export function contactOf(player: Player): BodyContact {
       nearLogged: false,
       tackleTries: 0,
       last: null,
+      slideX: 0,
+      slideY: 0,
     };
     clocks.set(player, clock);
   }
@@ -106,8 +112,14 @@ export function tickContact(player: Player, dt: number) {
   if (clock.pancake > 0) {
     clock.pancake = Math.max(0, clock.pancake - dt);
     if (clock.pancake === 0) {
+      // archive/v10/game.js 9126–9129. A pancake stays down through the get-up.
+      const stayed = clock.pancaked;
       clock.pancaked = false;
-      clock.recover = Math.max(clock.recover, 0.4);
+      clock.recover = Math.max(clock.recover, stayed ? 0.7 : 0.4);
+      if (stayed) {
+        clock.slideX *= 0.15;
+        clock.slideY *= 0.15;
+      }
     }
     return;
   }
@@ -134,6 +146,37 @@ function shed(
   block.levelY = Math.max(block.levelY, 5.5);
 }
 
+function pointSlide(clock: BodyContact, defender: Player, carrier: Player, speed: number) {
+  const ang = Math.atan2(carrier.yard - defender.yard, carrier.x - defender.x);
+  clock.slideX = Math.cos(ang) * speed;
+  clock.slideY = Math.sin(ang) * speed;
+}
+
+function nearGoalLine(yard: number): boolean {
+  return readAttackNorth() ? yard > 95.5 : yard < 4.5;
+}
+
+function releaseBlock(
+  clock: BodyContact,
+  blocker: Player,
+  defender: Player,
+  block: BlockAssignment,
+  carrier: Player,
+  duration: number,
+  speed: number,
+  userHeld: boolean,
+) {
+  if (block.targetId === defender.id) block.targetId = null;
+  clock.engage = 0;
+  block.secondLevel = true;
+  block.mode = "climb";
+  block.levelY = Math.max(block.levelY, 5.5);
+  clock.last = result("broken", blocker.id, defender.id, duration, clock.pushYards);
+  if (userHeld) return;
+  clock.recover = Math.max(clock.recover, duration);
+  pointSlide(clock, defender, carrier, speed);
+}
+
 /**
  * One blocker against his current target.
  * `allowPush` is false while a stiff-arm is the carrier action, so `step`
@@ -146,6 +189,8 @@ export function resolveBlockContact(
   carrier: Player,
   dt: number,
   allowPush: boolean,
+  age = 0,
+  userHeld = false,
 ): ContactResult | null {
   const clock = contactOf(defender);
   if (clock.pancake > 0 || clock.recover > 0) return null;
@@ -159,57 +204,98 @@ export function resolveBlockContact(
     if (clock.engage > 0 || dist < gap + 0.08) {
       const duration = beaten ? 0.08 : 0.16;
       shed(clock, blocker, defender, block, duration);
+      if (!userHeld) pointSlide(clock, defender, carrier, beaten ? 9 : 8.5);
+      if (userHeld) clock.recover = 0;
       return clock.last;
     }
     return null;
   }
   if (dist >= gap + 0.08) return null;
 
+  // archive/v10/game.js 8974–8988. Drop a block that has gone past the runner or to the wrong side.
+  const pastDef = downfieldDelta(blocker.yard, defender.yard) > 0.35 && blockerToCarrier > toCarrier;
+  const wrongSide =
+    Math.sign(blocker.x - defender.x) === Math.sign(defender.x - carrier.x) &&
+    Math.abs(blocker.x - defender.x) > 0.4 &&
+    blockerToCarrier > toCarrier + 0.15;
+  if (pastDef || wrongSide) {
+    releaseBlock(clock, blocker, defender, block, carrier, 0.08, 9, userHeld);
+    return clock.last;
+  }
+
   const olOnDt = defender.role === "DT" && (blocker.role === "OL" || blocker.role === "TE" || blocker.role === "FB");
   const shedAt = olOnDt ? 2.1 : 1.15;
   let started: ContactResult | null = null;
   if (clock.engage <= 0 && clock.pushYards > shedAt) {
     shed(clock, blocker, defender, block, olOnDt ? 0.28 : 0.16);
+    if (!userHeld) pointSlide(clock, defender, carrier, 8.5);
+    if (userHeld) clock.recover = 0;
     return clock.last;
   }
   if (clock.engage <= 0) {
-    const pancakeChance = defender.role === "DT" ? (blocker.role === "OL" ? 0.11 : 0.08) : blocker.role === "FB" ? 0.1 : 0.07;
-    const level = blocker.yard <= defender.yard + 0.55;
-    if (level && pairUnit(blocker.id, defender.id) < pancakeChance) {
-      clock.pancake = 0.7;
-      clock.pancaked = true;
-      clock.engage = 0;
-      clock.slowed = Math.max(clock.slowed, 0.7);
-      const side = Math.sign(defender.x - blocker.x) || 1;
-      if (allowPush) {
-        defender.x += side * 0.35;
-        defender.yard += 0.25;
-      }
-      clock.last = result("pancaked", blocker.id, defender.id, 0.7, clock.pushYards);
+    // archive/v10/game.js 8995–9016. Slip rises with push yards and the age of the play.
+    const breakBlock = readBreakBlock();
+    let slipP =
+      clock.pushYards > 1.15 || nearGoalLine(defender.yard) || downfieldDelta(defender.yard, carrier.yard) > 2.4 || age > 2.15
+        ? 0.72
+        : 0.28;
+    if (olOnDt) slipP = clock.pushYards > 2.1 || nearGoalLine(defender.yard) || age > 2.8 ? 0.38 : 0.1;
+    slipP = Math.max(0.06, Math.min(0.92, slipP * (0.55 + 0.45 * breakBlock)));
+    if (toCarrier > 8.5 || Math.random() < slipP) {
+      const duration = (olOnDt ? 0.28 : 0.16) + Math.random() * 0.12;
+      releaseBlock(clock, blocker, defender, block, carrier, duration, 8 + Math.random() * 3, userHeld);
       return clock.last;
     }
-    const hold = ((olOnDt || block.driveBlock ? 1.15 : 0.55) + (olOnDt || block.driveBlock ? 0.22 : 0.15))
-      * (block.sturdyBlock ? 1.2 : 1)
-      / Math.max(0.45, readBreakBlock());
+    const fatigue = age < 2.2 ? 1 : Math.max(0.42, 1 - (age - 2.2) * 0.22);
+    const hold =
+      ((olOnDt || block.driveBlock ? 1.15 : 0.55) + Math.random() * (olOnDt || block.driveBlock ? 0.45 : 0.3)) *
+      fatigue *
+      (block.sturdyBlock ? 1.2 : 1) /
+      Math.max(0.45, breakBlock);
     clock.engage = hold;
     clock.slowed = Math.max(clock.slowed, defender.role === "DT" ? 0.62 : 0.42);
     clock.last = result("engaged", blocker.id, defender.id, hold, clock.pushYards);
     started = clock.last;
+    const pancakeChance = defender.role === "DT" ? (blocker.role === "OL" ? 0.11 : 0.08) : blocker.role === "FB" ? 0.1 : 0.07;
+    const level = blocker.yard <= defender.yard + 0.55;
+    if (level && pairUnit(blocker.id, defender.id) < pancakeChance) {
+      clock.pancake = 0.7 + Math.random() * 0.3;
+      clock.pancaked = true;
+      clock.engage = 0;
+      clock.slowed = Math.max(clock.slowed, 0.7);
+      const side = Math.sign(defender.x - blocker.x) || 1;
+      clock.slideX = side * (1.1 + Math.random() * 0.9);
+      clock.slideY = attackSign() * (1.2 + Math.random());
+      if (allowPush) {
+        defender.x += side * 0.35;
+        defender.yard += attackSign() * 0.25;
+      }
+      clock.last = result("pancaked", blocker.id, defender.id, clock.pancake, clock.pushYards);
+      return clock.last;
+    }
   }
 
   const overlap = Math.max(0.04, gap - dist + 0.1);
   clock.pushYards += overlap * (defender.role === "DT" ? 1.25 : 1) * dt * 60;
   clock.slowed = Math.max(clock.slowed, defender.role === "DT" ? 0.62 : 0.42);
   if (block.sturdyBlock && !block.backsideSeal) clock.slowed = Math.max(clock.slowed, 0.78);
+  if (block.backsideSeal) clock.slowed = Math.max(clock.slowed, 0.7);
   if (allowPush) {
     const frames = dt * 60;
     let push = Math.min(block.sturdyBlock ? 0.22 : 0.48, (0.09 + overlap * 0.55) * (defender.role === "DT" ? 1.65 : 1));
     if (block.driveBlock && !block.sturdyBlock) push *= 1.45;
     if (block.sturdyBlock && !block.backsideSeal) push *= 0.55;
     if (block.backsideSeal) push *= 1.55;
-    const drive = Math.min(block.sturdyBlock ? 0.28 : 0.58, (0.12 + overlap * 0.7) * (defender.role === "DT" ? 1.65 : 1));
+    let drive = Math.min(block.sturdyBlock ? 0.28 : 0.58, (0.12 + overlap * 0.7) * (defender.role === "DT" ? 1.65 : 1));
+    if (block.driveBlock && !block.sturdyBlock) drive *= 1.35;
+    if (downfieldDelta(defender.yard, carrier.yard) > 3.2) drive *= 0.18;
     defender.x += block.sealSide * push * frames;
-    defender.yard += drive * frames;
+    defender.yard += attackSign() * drive * frames;
+  }
+  // archive/v10/game.js 9058–9065. A defender who has cleared the block does not stay stuck.
+  if (downfieldDelta(defender.yard, carrier.yard) > 6 || toCarrier > 9) {
+    releaseBlock(clock, blocker, defender, block, carrier, 0.42, 8.5, userHeld);
+    return clock.last;
   }
   return started;
 }
